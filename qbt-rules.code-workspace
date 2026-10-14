@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../qbt-rules.wiki"
+		},
+		{
+			"name": "qbt-rules.docker",
+			"path": "../../docker/svcs/qbt"
+		}
+	],
+	"settings": {}
+}
