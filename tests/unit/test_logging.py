@@ -222,6 +222,31 @@ class TestSetupLogging:
         assert "Test message" in log_content
         assert "INFO" in log_content
 
+    def test_file_honours_log_level(self, tmp_path):
+        """At INFO the file drops DEBUG records -- a long-running server
+        at DEBUG writes hundreds of MB a day of per-torrent detail."""
+        log_file = tmp_path / "test.log"
+
+        setup_logging(_logging_config(level="INFO", file=log_file))
+
+        logger = logging.getLogger("test")
+        logger.debug("Debug detail")
+        logger.info("Info message")
+
+        log_content = log_file.read_text()
+        assert "Info message" in log_content
+        assert "Debug detail" not in log_content
+
+    def test_file_gets_debug_when_level_is_debug(self, tmp_path):
+        """DEBUG in the file is still available, just opt-in."""
+        log_file = tmp_path / "test.log"
+
+        setup_logging(_logging_config(level="DEBUG", file=log_file))
+
+        logging.getLogger("test").debug("Debug detail")
+
+        assert "Debug detail" in log_file.read_text()
+
 
 class TestGetLogger:
     """Test logger retrieval functionality."""

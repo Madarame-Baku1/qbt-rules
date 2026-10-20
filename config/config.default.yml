@@ -232,7 +232,8 @@ metrics:
 # ============================================================================
 
 logging:
-  # Log level: DEBUG, INFO, WARNING, ERROR
+  # Log level for both console and log file: DEBUG, INFO, WARNING, ERROR
+  # (DEBUG logs every rule evaluation per torrent -- the file grows fast)
   # Env: QBT_RULES_LOGGING_LEVEL or QBT_RULES_LOGGING_LEVEL_FILE
   level: INFO
 
