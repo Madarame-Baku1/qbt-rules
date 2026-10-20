@@ -30,9 +30,11 @@ def setup_logging(logging_config: Dict[str, Any]):
     trace_mode = logging_config['trace_mode']
     client_mode = logging_config.get('client_mode', False)
 
-    # The log file is the persistent diagnostic record -- always full detail
-    # (timestamp, level, and function/line under --trace), regardless of
-    # what the console shows, so it's there to review later.
+    # The log file is the persistent diagnostic record -- full format
+    # (timestamp, level, and function/line under --trace) so it's there to
+    # review later. It honours logging.level like the console does: at
+    # DEBUG a long-running server writes hundreds of MB a day of per-torrent
+    # evaluation detail, so DEBUG in the file is opt-in, not the default.
     file_log_format = LOG_FORMAT_DETAILED if trace_mode else LOG_FORMAT_SIMPLE
 
     # In client mode (any invocation other than --serve), console output is
@@ -57,7 +59,7 @@ def setup_logging(logging_config: Dict[str, Any]):
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
         file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(getattr(logging, log_level))
         file_formatter = logging.Formatter(file_log_format, datefmt=DATE_FORMAT)
         file_handler.setFormatter(file_formatter)
     except (PermissionError, OSError) as e:
