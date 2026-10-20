@@ -606,6 +606,7 @@ class TestRunServerMode:
             integrations_config={
                 'sonarr': {'url': None, 'api_key': None},
                 'radarr': {'url': None, 'api_key': None},
+                'trackie': {'url': None, 'max_age': None, 'timeout': None},
             }
         )
         mock_worker.start.assert_called_once()

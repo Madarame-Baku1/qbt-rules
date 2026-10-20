@@ -13,6 +13,16 @@ import requests
 from qbt_rules.api import QBittorrentAPI
 from qbt_rules.utils import parse_tags, is_older_than, is_newer_than, is_larger_than, is_smaller_than
 from qbt_rules.errors import DataNotReadyError, FieldError, OperatorError
+from qbt_rules.trackie import (
+    ACCOUNT_FIELDS,
+    COMPUTED_ACCOUNT_FIELDS,
+    COMPUTED_TORRENT_FIELDS,
+    TORRENT_FIELDS,
+    TrackerDataNotReadyError,
+    TrackieClient,
+    TrackieSnapshot,
+    parse_max_age,
+)
 from qbt_rules.logging import get_logger
 from qbt_rules import metrics
 
@@ -81,6 +91,21 @@ class ConditionEvaluator:
             'seeds': 0,
             'leechs': 0,
         }
+
+        # tracker.* namespace (trackie integration). Set by RulesEngine when
+        # integrations.trackie.url is configured; the snapshot is fetched
+        # lazily on the first tracker.* lookup of a run and then reused for
+        # every torrent and rule in that run -- see reset_trackie().
+        self.trackie: Optional[TrackieClient] = None
+        self._trackie_snapshot: Optional[TrackieSnapshot] = None
+        self._trackie_error: Optional[str] = None
+        self._trackie_loaded = False
+
+    def reset_trackie(self):
+        """Forget the previous run's trackie snapshot (call once per run)"""
+        self._trackie_snapshot = None
+        self._trackie_error = None
+        self._trackie_loaded = False
 
     def clear_caches(self):
         """Clear all caches (call between rule executions)"""
@@ -368,11 +393,94 @@ class ConditionEvaluator:
                 return self.stats.get(parts[0], {}).get(parts[1], 0)
             return self.stats.get(property_name, 0)
 
+        elif endpoint == 'tracker':
+            return self._get_tracker_field(torrent, property_name, field)
+
         else:
             raise FieldError(
                 field,
                 f"Unknown API endpoint: '{endpoint}'"
             )
+
+    def _trackie(self, field: str, torrent_hash: str) -> TrackieSnapshot:
+        """This run's trackie snapshot, fetched on first use"""
+        if not self._trackie_loaded:
+            self._trackie_loaded = True
+            assert self.trackie is not None
+            self._trackie_snapshot, self._trackie_error = self.trackie.fetch()
+            if self._trackie_error:
+                # Once per run, not once per torrent: every tracker.* lookup
+                # this run will be skipped for the same reason
+                logger.warning(f"tracker.* rules skipped this run: {self._trackie_error}")
+        if self._trackie_snapshot is None:
+            raise TrackerDataNotReadyError(field, torrent_hash, self._trackie_error or "no snapshot")
+        return self._trackie_snapshot
+
+    def _get_tracker_field(self, torrent: Dict, property_name: str, field: str) -> Any:
+        """
+        tracker.<field> and tracker.account.<field> from trackie's snapshot
+
+        tracker.* reads the torrent's own record (looked up by hash);
+        tracker.account.* reads the account of whichever tracker the torrent
+        is on -- from its record when matched, else from its tracker URLs
+        against each account's announce_hosts, so account checks work for
+        torrents trackie hasn't matched (e.g. manual adds).
+
+        Raises TrackerDataNotReadyError (rule skipped, not failed) when the
+        data is unreachable, stale or missing, and FieldError for an unknown
+        field or when the integration isn't configured.
+        """
+        if self.trackie is None:
+            raise FieldError(
+                field,
+                "tracker.* fields need the trackie integration: set integrations.trackie.url"
+            )
+
+        is_account = property_name.startswith('account.')
+        name = property_name[len('account.'):] if is_account else property_name
+        known = (
+            set(ACCOUNT_FIELDS) | set(COMPUTED_ACCOUNT_FIELDS) if is_account
+            else set(TORRENT_FIELDS) | set(COMPUTED_TORRENT_FIELDS)
+        )
+        if name not in known:
+            raise FieldError(
+                field,
+                f"Unknown tracker field '{name}' (valid: {', '.join(sorted(known))})"
+            )
+
+        torrent_hash = torrent.get('hash', '')
+        snap = self._trackie(field, torrent_hash)
+        record = snap.record(torrent_hash)
+
+        if is_account:
+            key = record['tracker'] if record else snap.tracker_for_urls(
+                self._get_field_value(torrent, 'trackers.url')
+            )
+            if key is None:
+                raise TrackerDataNotReadyError(
+                    field, torrent_hash, "torrent is not on a tracker trackie covers"
+                )
+            stale = snap.stale_reason(key)
+            account = snap.accounts.get(key)
+            if stale or account is None:
+                raise TrackerDataNotReadyError(field, torrent_hash, stale or f"no account data for '{key}'")
+            if name == 'ratio_ok':
+                ratio, minimum = account.get('ratio'), account.get('min_ratio')
+                return None if ratio is None or minimum is None else ratio >= minimum
+            if name == 'age':
+                return snap.age_s(account.get('seen_at'))
+            return account.get(ACCOUNT_FIELDS[name])
+
+        if record is None:
+            # Not on a covered tracker, not on the tracker's pages (so its
+            # standing is unknown), or not matched to this hash yet
+            raise TrackerDataNotReadyError(field, torrent_hash, "trackie has no record for this torrent")
+        stale = snap.stale_reason(record.get('tracker', ''))
+        if stale:
+            raise TrackerDataNotReadyError(field, torrent_hash, stale)
+        if name == 'age':
+            return snap.age_s(record.get('seen_at'))
+        return record.get(TORRENT_FIELDS[name])
 
     def _apply_operator(self, actual: Any, operator: str, expected: Any, field: str) -> bool:
         """
@@ -763,7 +871,13 @@ class ActionExecutor:
             return None
 
         def replace(match: re.Match) -> str:
-            value = self.field_resolver.get_field_value(torrent, match.group(1))
+            try:
+                value = self.field_resolver.get_field_value(torrent, match.group(1))
+            except DataNotReadyError:
+                # e.g. ${tracker.status} for a torrent trackie has no record of:
+                # render it like any other missing value rather than failing
+                # the whole notification
+                value = None
             if isinstance(value, list):
                 return ', '.join(str(v) for v in value)
             return '' if value is None else str(value)
@@ -990,6 +1104,13 @@ class RulesEngine:
             integrations_config=integrations_config,
             field_resolver=self.evaluator,
         )
+        trackie = (integrations_config or {}).get('trackie') or {}
+        if trackie.get('url'):
+            self.evaluator.trackie = TrackieClient(
+                trackie['url'],
+                max_age_s=parse_max_age(trackie.get('max_age')),
+                timeout_s=float(trackie.get('timeout') or 10),
+            )
         self.stats = RuleStats()
 
     def run(self, context: Optional[str] = None, torrent_hash: Optional[str] = None):
@@ -1046,6 +1167,11 @@ class RulesEngine:
             # Snapshot semantics: this is NOT recomputed as rules run, so an
             # earlier rule's action (e.g. force_start) won't be reflected in
             # stats.* for a later rule's check within the same run.
+            # tracker.* reads a fresh trackie snapshot each run, fetched on
+            # first use -- a run whose rules never mention tracker.* makes no
+            # request to trackie at all
+            self.evaluator.reset_trackie()
+
             self.evaluator.stats = {
                 'state': Counter(t.get('state') for t in all_torrents),
                 'category': Counter(t.get('category') for t in all_torrents if t.get('category')),
