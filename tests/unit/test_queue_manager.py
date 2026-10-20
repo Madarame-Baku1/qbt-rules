@@ -459,17 +459,21 @@ class TestCreateQueueFactory:
         """create_queue() raises ValueError when redis package not installed"""
         import sys
 
-        # Save original modules
-        saved_redis = sys.modules.get('redis')
-        saved_redis_queue = sys.modules.get('qbt_rules.queue_backends.redis_queue')
+        # Save every module this test removes, not just top-level 'redis':
+        # dropping redis.* submodules (and fakeredis) without restoring them
+        # makes later imports create duplicate classes, e.g. a second
+        # redis.driver_info.DriverInfo that redis>=8.1's isinstance check
+        # rejects, breaking every Redis test that runs after this one.
+        saved_modules = {
+            key: mod for key, mod in sys.modules.items()
+            if ('redis' in key and 'qbt_rules' not in key and 'tests' not in key)
+            or ('redis_queue' in key and 'tests' not in key)
+        }
 
         try:
             # Remove modules from cache to force reimport
-            for key in list(sys.modules.keys()):
-                if 'redis' in key and 'qbt_rules' not in key and 'tests' not in key:
-                    del sys.modules[key]
-                if 'redis_queue' in key and 'tests' not in key:
-                    del sys.modules[key]
+            for key in saved_modules:
+                del sys.modules[key]
 
             # Block redis import
             sys.modules['redis'] = None
@@ -484,21 +488,14 @@ class TestCreateQueueFactory:
             assert "pip install qbt-rules[redis]" in error_msg
 
         finally:
-            # Restore original state
-            if saved_redis is not None:
-                sys.modules['redis'] = saved_redis
-            elif 'redis' in sys.modules:
-                del sys.modules['redis']
-
-            if saved_redis_queue is not None:
-                sys.modules['qbt_rules.queue_backends.redis_queue'] = saved_redis_queue
-
-            # Reimport to restore normal state
-            try:
-                import redis
-                from qbt_rules.queue_backends.redis_queue import RedisQueue
-            except ImportError:
-                pass  # Redis not available in test environment
+            # Restore original state: drop anything the failed import left
+            # behind (including the None sentinel), then put back the saved
+            # module objects
+            for key in list(sys.modules.keys()):
+                if ('redis' in key and 'qbt_rules' not in key and 'tests' not in key) \
+                        or ('redis_queue' in key and 'tests' not in key):
+                    del sys.modules[key]
+            sys.modules.update(saved_modules)
 
     def test_create_queue_redis_success_with_mock(self):
         """create_queue() successfully creates RedisQueue with correct parameters"""
