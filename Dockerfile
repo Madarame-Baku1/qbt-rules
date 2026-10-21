@@ -45,15 +45,20 @@ COPY config/config.default.yml /usr/share/qbt-rules/
 COPY config/rules.default.yml /usr/share/qbt-rules/
 
 # Create non-root user
-RUN useradd --create-home --shell /bin/bash qbtrules && \
+RUN useradd --create-home --shell /bin/bash --uid 1000 qbtrules && \
     mkdir -p /config && \
     chown -R qbtrules:qbtrules /config
 
 # Set working directory
 WORKDIR /app
 
-# Switch to non-root user
-USER qbtrules
+# Starts as root only to give /config to PUID:PGID (default 1000:1000,
+# the qbtrules user), then drops to that user -- see docker/qbt-rules.sh.
+# The wrapper shadows the real qbt-rules on PATH so `docker exec` runs as
+# the same user as the server.
+COPY docker/qbt-rules.sh /usr/local/bin/qbt-rules
+RUN chmod 0755 /usr/local/bin/qbt-rules
+ENV PATH="/usr/local/bin:$PATH"
 
 # Default configuration directory
 ENV CONFIG_DIR=/config
