@@ -1,7 +1,7 @@
 #!/bin/sh
 # Entrypoint and `docker exec` wrapper for qbt-rules.
 #
-# Installed as /usr/local/bin/qbt-rules, ahead of the real one in
+# Installed as /opt/qbt-rules/bin/qbt-rules, ahead of the real one in
 # /opt/venv/bin on PATH, so container start and `docker exec <c> qbt-rules ...`
 # both come through here.
 #

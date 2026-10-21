@@ -56,9 +56,11 @@ WORKDIR /app
 # the qbtrules user), then drops to that user -- see docker/qbt-rules.sh.
 # The wrapper shadows the real qbt-rules on PATH so `docker exec` runs as
 # the same user as the server.
-COPY docker/qbt-rules.sh /usr/local/bin/qbt-rules
-RUN chmod 0755 /usr/local/bin/qbt-rules
-ENV PATH="/usr/local/bin:$PATH"
+# Its own directory, not /usr/local/bin: putting that first on PATH would
+# also make `python` the base image's interpreter instead of the venv's.
+COPY docker/qbt-rules.sh /opt/qbt-rules/bin/qbt-rules
+RUN chmod 0755 /opt/qbt-rules/bin/qbt-rules
+ENV PATH="/opt/qbt-rules/bin:$PATH"
 
 # Default configuration directory
 ENV CONFIG_DIR=/config
