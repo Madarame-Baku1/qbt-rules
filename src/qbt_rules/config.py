@@ -22,6 +22,7 @@ from croniter import croniter
 
 from qbt_rules.errors import ConfigurationError
 from qbt_rules.resolver import RuleResolver
+from qbt_rules.rules_validation import check_rules_structure
 
 
 # Environment variable mapping
@@ -417,17 +418,18 @@ class Config:
         copy_default_if_missing(self.config_file, 'config.default.yml')
         copy_default_if_missing(self.rules_file, 'rules.default.yml')
 
+        # Resolver and cache for resolved rules (set by _load_rules)
+        self._resolver: Optional[RuleResolver] = None
+        self._resolved_rules_cache: Optional[list] = None
+
         # Load configurations
         self._load_config()
         self._load_rules()
         self._load_schedule()
 
-        # Track rules file modification time for hot-reload
-        self._rules_mtime = None
-
-        # Resolver and cache for resolved rules
-        self._resolver: Optional[RuleResolver] = None
-        self._resolved_rules_cache: Optional[list] = None
+        # rules.yml's identity when last loaded, for hot-reload. None makes
+        # the first get_rules() re-read it.
+        self._rules_stamp: Optional[tuple] = None
 
     def _load_config(self):
         """Load config.yml with environment variable expansion"""
@@ -439,10 +441,33 @@ class Config:
         logging.debug(f"Configuration loaded successfully")
 
     def _load_rules(self):
-        """Load rules.yml and initialize resolver"""
+        """Load rules.yml and initialize resolver
+
+        Everything is validated before any of it is assigned, so a reload
+        that fails leaves the previously loaded rules, refs and resolver
+        fully intact (get_rules() relies on that to keep serving them).
+        """
         logging.debug(f"Loading rules from {self.rules_file}")
 
         raw_rules = load_yaml_file(self.rules_file)
+
+        # The same checks the rules editor runs before it will save a file
+        # (rules_validation.check_rules_structure) -- here only the first
+        # problem is reported, as a ConfigurationError.
+        problems = check_rules_structure(raw_rules)
+        if problems:
+            raise ConfigurationError(str(self.rules_file), problems[0].message)
+
+        rules = raw_rules.get('rules', [])
+        logging.debug(f"Loaded {len(rules)} rules")
+
+        # Extract refs block and initialize resolver
+        refs = raw_rules.get('refs') or {}
+        instances = raw_rules.get('instances') or {}
+
+        # Create resolver with global refs
+        # TODO: Support per-instance resolvers when running against specific instances
+        resolver = RuleResolver(refs=refs, instance_id=None, instances=instances)
 
         # Schema marker for rules.yml, defaulting to 1 for files written
         # before this existed. Not consulted by anything today -- purely a
@@ -452,77 +477,16 @@ class Config:
         # this is set inside _load_rules(), which get_rules() re-invokes
         # when rules.yml changes on disk.
         self.rules_version = raw_rules.get('version', 1)
-
-        self.rules = raw_rules.get('rules', [])
-
-        if not isinstance(self.rules, list):
-            raise ConfigurationError(
-                str(self.rules_file),
-                "'rules' must be a list"
-            )
-
-        # Validate required fields for each rule
-        seen_ids = set()
-        for i, rule in enumerate(self.rules):
-            if not isinstance(rule, dict):
-                raise ConfigurationError(
-                    str(self.rules_file),
-                    f"Rule #{i+1} must be a dictionary"
-                )
-
-            if 'id' not in rule:
-                raise ConfigurationError(
-                    str(self.rules_file),
-                    f"Rule #{i+1} missing required field: 'id'"
-                )
-
-            if not isinstance(rule['id'], str) or not rule['id']:
-                raise ConfigurationError(
-                    str(self.rules_file),
-                    f"Rule #{i+1} has an invalid 'id': must be a non-empty string"
-                )
-
-            # id is this rule's stable identity everywhere (by_rule stats,
-            # ${rule.id} templating, a future rule-editor UI) -- a silent
-            # collision would mean two different rules' history/state get
-            # merged under one key, so this is enforced at load time rather
-            # than left as an easy-to-miss footgun.
-            if rule['id'] in seen_ids:
-                raise ConfigurationError(
-                    str(self.rules_file),
-                    f"Duplicate rule id: '{rule['id']}' -- rule ids must be unique"
-                )
-            seen_ids.add(rule['id'])
-
-            if 'conditions' not in rule:
-                raise ConfigurationError(
-                    str(self.rules_file),
-                    f"Rule '{rule['id']}' missing required field: 'conditions'"
-                )
-
-            if 'actions' not in rule:
-                raise ConfigurationError(
-                    str(self.rules_file),
-                    f"Rule '{rule['id']}' missing required field: 'actions'"
-                )
-
-        logging.debug(f"Loaded {len(self.rules)} rules")
-
-        # Extract refs block and initialize resolver
-        refs = raw_rules.get('refs', {})
-        instances = raw_rules.get('instances', {})
-
-        # Create resolver with global refs
-        # TODO: Support per-instance resolvers when running against specific instances
-        self._resolver = RuleResolver(refs=refs, instance_id=None, instances=instances)
+        self.rules = rules
+        self._resolver = resolver
 
         # Invalidate resolved rules cache
         self._resolved_rules_cache = None
 
         if refs:
-            logging.debug(f"Initialized resolver with refs: vars={len(refs.get('vars', {}))}, "
-                         f"conditions={len(refs.get('conditions', {}))}, "
-                         f"actions={len(refs.get('actions', {}))}")
+            logging.debug(f"Initialized resolver with refs: vars={len(resolver.vars)}, "
+                         f"conditions={len(resolver.conditions)}, "
+                         f"actions={len(resolver.actions)}")
 
     def _load_schedule_from_env(self) -> Optional[List[Dict[str, str]]]:
         """
@@ -621,6 +585,37 @@ class Config:
         """Check if dry-run mode is enabled"""
         return parse_bool(resolve_config(None, 'QBT_RULES_DRY_RUN', self.config, 'engine.dry_run', default=False))
 
+    def _current_rules_stamp(self) -> tuple:
+        """
+        rules.yml's identity on disk: any change to it means reload
+
+        Compared for inequality rather than "mtime went up", so a file
+        swapped for an older one (a restored backup, `cp -p`, a git
+        checkout) still reloads. Inode catches an atomic replace even
+        within one mtime tick; size catches an in-place rewrite.
+        """
+        st = self.rules_file.stat()
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+    def reload_rules(self, force: bool = False) -> bool:
+        """
+        Re-read rules.yml if it changed on disk since it was last loaded
+        (or unconditionally with force=True)
+
+        Raises whatever loading raises -- ConfigurationError for a file the
+        loader rejects -- leaving the previously loaded rules in place.
+
+        Returns:
+            True if the rules were reloaded
+        """
+        stamp = self._current_rules_stamp()
+        if not force and stamp == self._rules_stamp:
+            return False
+        self._load_rules()
+        self._rules_stamp = stamp
+        logging.info(f"Rules reloaded from {self.rules_file}")
+        return True
+
     def get_rules(self, resolved: bool = True) -> list:
         """
         Get list of rules with hot-reload support
@@ -647,14 +642,7 @@ class Config:
             [{'id': 'cleanup', 'conditions': [{'$ref': 'conditions.well-seeded'}], ...}]
         """
         try:
-            # Check if rules file has been modified
-            current_mtime = self.rules_file.stat().st_mtime
-
-            # Reload if file changed or first load after init
-            if self._rules_mtime is None or current_mtime > self._rules_mtime:
-                self._load_rules()
-                self._rules_mtime = current_mtime
-                logging.info(f"Rules reloaded from {self.rules_file}")
+            self.reload_rules()
         except Exception as e:
             # Keep existing rules on error - graceful degradation
             logging.warning(f"Failed to reload rules from {self.rules_file}: {e}. Using cached rules.")

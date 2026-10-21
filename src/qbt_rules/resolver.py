@@ -85,9 +85,11 @@ class RuleResolver:
             instances: Optional instances dict containing instance-scoped refs
         """
         # Extract typed groups from refs
-        self.vars = dict(refs.get('vars', {}))
-        self.conditions = refs.get('conditions', {})
-        self.actions = refs.get('actions', {})
+        # `or {}`: a group present but left empty (`vars:` with everything
+        # under it commented out) parses as None, and means "none defined"
+        self.vars = dict(refs.get('vars') or {})
+        self.conditions = refs.get('conditions') or {}
+        self.actions = refs.get('actions') or {}
 
         # Optional descriptive metadata for reusable blocks (description,
         # tags, etc), e.g. refs.meta.conditions.<name>/refs.meta.actions.<name>.
@@ -96,7 +98,7 @@ class RuleResolver:
         # this is pure storage for future tooling (e.g. a block-library UI)
         # to read/write, with zero effect on rule evaluation. Absent from a
         # refs block with no 'meta' key, same as today.
-        self.meta = refs.get('meta', {})
+        self.meta = refs.get('meta') or {}
 
         # Apply instance-scoped variable overrides
         # Fully implemented - awaiting Config class integration to pass instance_id
