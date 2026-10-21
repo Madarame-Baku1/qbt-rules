@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > before inserting its own, so a manual entry for a version gets duplicated when that
 > version is tagged.**
 
+## [0.10.1] - 2026-10-21
+
+### 🐛 Bug Fixes
+- Merge pull request #20 from andronics/dev/entrypoint-home
+- fix: set HOME after dropping to PUID in the Docker image
+
+### 🔧 Maintenance
+- chore: Bump version to 0.10.1
+
+
 ## [0.10.0] - 2026-10-21
 
 ### ✨ New Features
