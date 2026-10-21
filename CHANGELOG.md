@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > before inserting its own, so a manual entry for a version gets duplicated when that
 > version is tagged.**
 
+## [0.8.0] - 2026-10-21
+
+### ✨ New Features
+- Merge pull request #5 from andronics/dev/trackie-integration
+- feat: tracker.* fields from trackie
+
+### 🐛 Bug Fixes
+- Merge pull request #4 from andronics/dev/file-log-level
+- fix: log file honours logging.level instead of always DEBUG
+
+### 🔧 Maintenance
+- chore: Bump version to 0.8.0
+- chore: ignore saved tracker pages and graphify output
+- chore: ignore .graphify and add VS Code workspace
+
+
 ## [0.7.1] - 2026-09-29
 
 ### ✨ New Features
