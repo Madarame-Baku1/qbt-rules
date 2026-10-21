@@ -38,13 +38,16 @@ class QueueManager(ABC):
     """
 
     @abstractmethod
-    def enqueue(self, context: Optional[str] = None, hash_filter: Optional[str] = None) -> str:
+    def enqueue(self, context: Optional[str] = None, hash_filter: Optional[str] = None,
+                dry_run: bool = False) -> str:
         """
         Add job to queue
 
         Args:
             context: Context filter for rules (weekly-cleanup, torrent-imported, etc.)
             hash_filter: Optional torrent hash to process single torrent
+            dry_run: Run this job in dry-run mode even if the server isn't
+                (it can't turn dry-run off when the server has it on)
 
         Returns:
             Job ID (UUID string)
@@ -223,7 +226,8 @@ class QueueManager(ABC):
         started_at: Optional[datetime] = None,
         completed_at: Optional[datetime] = None,
         result: Optional[Dict[str, Any]] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        dry_run: bool = False
     ) -> Dict[str, Any]:
         """
         Create standardized job dictionary
@@ -238,6 +242,7 @@ class QueueManager(ABC):
             'job_id': job_id,
             'context': context,
             'hash': hash_filter,
+            'dry_run': dry_run,
             'status': status,
             'created_at': created_at.isoformat() if isinstance(created_at, datetime) else created_at,
             'started_at': started_at.isoformat() if isinstance(started_at, datetime) else started_at,

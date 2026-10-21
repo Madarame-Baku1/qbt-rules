@@ -468,7 +468,7 @@ class TestWorkerProcessJob:
 
         worker._process_job(job)
 
-        execute_spy.assert_called_once_with('weekly-cleanup', 'abc123')
+        execute_spy.assert_called_once_with('weekly-cleanup', 'abc123', False)
 
     def test_process_job_updates_status_on_success(self, worker, mock_queue, mocker):
         """Should update job status to COMPLETED on success"""
@@ -615,6 +615,32 @@ class TestWorkerExecuteJob:
 
         engine_spy.assert_called_once()
         assert engine_spy.call_args[1]['dry_run'] is True
+
+    @pytest.mark.parametrize('config_dry_run, job_dry_run, expected', [
+        (False, False, False),
+        (False, True, True),    # the job asked for it
+        (True, False, True),    # a job can't turn the server's dry-run off
+        (True, True, True),
+    ])
+    def test_execute_job_combines_job_and_config_dry_run(self, worker, mocker,
+                                                         config_dry_run, job_dry_run, expected):
+        worker.config.is_dry_run.return_value = config_dry_run
+        engine_spy = mocker.patch('qbt_rules.worker.RulesEngine')
+        engine_spy.return_value.stats = mocker.MagicMock(
+            total_torrents=0, processed=0, rules_matched=0,
+            actions_executed=0, actions_skipped=0, errors=0
+        )
+
+        worker._execute_job(None, None, job_dry_run)
+
+        assert engine_spy.call_args[1]['dry_run'] is expected
+
+    def test_process_job_passes_job_dry_run(self, worker, mocker):
+        execute_spy = mocker.patch.object(worker, '_execute_job', return_value={})
+
+        worker._process_job({'job_id': 'job-1', 'context': 'manual', 'hash': None, 'dry_run': True})
+
+        execute_spy.assert_called_once_with('manual', None, True)
 
     def test_execute_job_calls_engine_run(self, worker, mocker):
         """Should call engine.run with context and hash"""

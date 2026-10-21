@@ -428,20 +428,32 @@ def run_client_mode(args, config_obj):
     logger.info(f"Submitting job to {server_url}")
     logger.info(f"  Context: {context or 'none'}")
     logger.info(f"  Hash: {hash_filter or 'all torrents'}")
+    dry_run = bool(getattr(args, 'dry_run', False))
+    if dry_run:
+        logger.info("  Dry run: yes")
+
+    params = {
+        'context': context,
+        'hash': hash_filter,
+        'key': api_key
+    }
+    if dry_run:
+        params['dry_run'] = 'true'
 
     try:
         response = requests.post(
             f"{server_url}/api/execute",
-            params={
-                'context': context,
-                'hash': hash_filter,
-                'key': api_key
-            },
+            params=params,
             timeout=10
         )
 
         if response.status_code == 202:
             job = response.json()
+            if dry_run and job.get('dry_run') is not True:
+                # A server older than per-job dry-run ignores the parameter
+                # and would run the job for real -- cancel it before it starts
+                _cancel_unconfirmed_dry_run(server_url, api_key, job['job_id'])
+                sys.exit(1)
             logger.info(f"✓ Job queued: {job['job_id']}")
             logger.info(f"  Status: {job['status']}")
             logger.info(f"  Queued at: {job['created_at']}")
@@ -468,6 +480,25 @@ def run_client_mode(args, config_obj):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         sys.exit(1)
+
+
+def _cancel_unconfirmed_dry_run(server_url: str, api_key: str, job_id: str):
+    """Cancel a job the server queued without the dry-run the client asked for"""
+    logger.error("The server didn't confirm dry-run for this job (it's older than "
+                 "per-job dry-run support), so it would have run for real.")
+    try:
+        response = requests.delete(f"{server_url}/api/jobs/{job_id}",
+                                   params={'key': api_key}, timeout=10)
+        cancelled = response.status_code == 200
+    except requests.exceptions.RequestException:
+        cancelled = False
+    if cancelled:
+        logger.error(f"Cancelled job {job_id} before it ran.")
+    else:
+        logger.error(f"Could not cancel job {job_id}; it may already be running. "
+                     f"Check it with --job-status {job_id}.")
+    logger.error("Upgrade the server, or set dry_run on the server instead "
+                 "(QBT_RULES_DRY_RUN=true).")
 
 
 def wait_for_job(server_url: str, api_key: str, job_id: str):

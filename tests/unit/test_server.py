@@ -188,6 +188,28 @@ class TestAuthenticationDecorator:
 class TestExecuteEndpoint:
     """Test POST /api/execute endpoint"""
 
+    @pytest.mark.parametrize('value', ['true', '1', 'yes', 'on', 'TRUE'])
+    def test_execute_dry_run_true(self, client, valid_headers, mock_queue, value):
+        response = client.post(f'/api/execute?context=manual&dry_run={value}', headers=valid_headers)
+
+        assert response.status_code == 202
+        mock_queue.enqueue.assert_called_once_with(context='manual', hash_filter=None, dry_run=True)
+
+    @pytest.mark.parametrize('value', ['false', '0', 'no', 'off'])
+    def test_execute_dry_run_false(self, client, valid_headers, mock_queue, value):
+        response = client.post(f'/api/execute?dry_run={value}', headers=valid_headers)
+
+        assert response.status_code == 202
+        mock_queue.enqueue.assert_called_once_with(context=None, hash_filter=None, dry_run=False)
+
+    @pytest.mark.parametrize('value', ['ture', 'maybe', ''])
+    def test_execute_rejects_unrecognised_dry_run(self, client, valid_headers, mock_queue, value):
+        """A typo must not silently become a real run"""
+        response = client.post(f'/api/execute?dry_run={value}', headers=valid_headers)
+
+        assert response.status_code == 400
+        mock_queue.enqueue.assert_not_called()
+
     def test_execute_without_auth_returns_401(self, client):
         """Should return 401 without authentication"""
         response = client.post('/api/execute')
@@ -199,28 +221,28 @@ class TestExecuteEndpoint:
         response = client.post('/api/execute?context=weekly-cleanup', headers=valid_headers)
 
         assert response.status_code == 202
-        mock_queue.enqueue.assert_called_once_with(context='weekly-cleanup', hash_filter=None)
+        mock_queue.enqueue.assert_called_once_with(context='weekly-cleanup', hash_filter=None, dry_run=False)
 
     def test_execute_enqueues_job_with_hash(self, client, valid_headers, mock_queue):
         """Should enqueue job with hash parameter"""
         response = client.post('/api/execute?hash=abc123', headers=valid_headers)
 
         assert response.status_code == 202
-        mock_queue.enqueue.assert_called_once_with(context=None, hash_filter='abc123')
+        mock_queue.enqueue.assert_called_once_with(context=None, hash_filter='abc123', dry_run=False)
 
     def test_execute_enqueues_job_with_both_params(self, client, valid_headers, mock_queue):
         """Should enqueue job with both context and hash"""
         response = client.post('/api/execute?context=torrent-imported&hash=def456', headers=valid_headers)
 
         assert response.status_code == 202
-        mock_queue.enqueue.assert_called_once_with(context='torrent-imported', hash_filter='def456')
+        mock_queue.enqueue.assert_called_once_with(context='torrent-imported', hash_filter='def456', dry_run=False)
 
     def test_execute_enqueues_job_without_params(self, client, valid_headers, mock_queue):
         """Should enqueue job without parameters"""
         response = client.post('/api/execute', headers=valid_headers)
 
         assert response.status_code == 202
-        mock_queue.enqueue.assert_called_once_with(context=None, hash_filter=None)
+        mock_queue.enqueue.assert_called_once_with(context=None, hash_filter=None, dry_run=False)
 
     def test_execute_returns_job_details(self, client, valid_headers, mock_queue):
         """Should return job details in response"""

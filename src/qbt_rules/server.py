@@ -24,9 +24,13 @@ from flask import Flask, request, jsonify, Response, render_template, redirect, 
 
 from qbt_rules.queue_manager import QueueManager, JobStatus
 from qbt_rules.worker import Worker
-from qbt_rules.config import Config
+from qbt_rules.config import Config, parse_bool
 from qbt_rules.__version__ import __version__
 from qbt_rules import metrics
+
+# Accepted spellings for boolean query parameters (parse_bool's true set
+# plus their opposites)
+BOOL_VALUES = {'true', 'false', '1', '0', 'yes', 'no', 'on', 'off'}
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +261,8 @@ def register_routes(app: Flask):
         Query Parameters:
             context (optional): Context filter (weekly-cleanup, torrent-imported, etc.)
             hash (optional): Torrent hash filter
+            dry_run (optional): true to run this job in dry-run mode. Only
+                adds dry-run; a server configured for dry-run stays in it
             key (required): API key
 
         Returns:
@@ -266,15 +272,24 @@ def register_routes(app: Flask):
         """
         context = request.args.get('context')
         hash_filter = request.args.get('hash')
+        dry_run_arg = request.args.get('dry_run')
+        if dry_run_arg is not None and dry_run_arg.lower() not in BOOL_VALUES:
+            # Reject rather than guess: a typo here must not run deletes for real
+            return jsonify({
+                'error': 'Bad Request',
+                'message': f"dry_run must be one of {', '.join(sorted(BOOL_VALUES))}"
+            }), 400
+        dry_run = parse_bool(dry_run_arg)
 
         try:
             # Enqueue job
-            job_id = queue.enqueue(context=context, hash_filter=hash_filter)
+            job_id = queue.enqueue(context=context, hash_filter=hash_filter, dry_run=dry_run)
 
             # Get full job details
             job = queue.get_job(job_id)
 
-            logger.info(f"Job queued: {job_id} (context={context}, hash={hash_filter})")
+            logger.info(f"Job queued: {job_id} (context={context}, hash={hash_filter}"
+                        f"{', dry_run=True' if dry_run else ''})")
 
             return jsonify(job), 202
 
