@@ -2,6 +2,8 @@
 
 Thanks for your interest! Bug reports, rule ideas, docs fixes and code are all welcome.
 
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 - **Questions or help with a rule:** ask in [Discussions](https://github.com/andronics/qbt-rules/discussions).
 - **Bugs and feature requests:** open an [issue](https://github.com/andronics/qbt-rules/issues/new/choose). Describing the problem you're trying to solve helps more than a proposed solution.
 - **Something small to start on:** look for issues labelled [`good first issue`](https://github.com/andronics/qbt-rules/labels/good%20first%20issue).
