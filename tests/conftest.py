@@ -110,6 +110,7 @@ class MockQBittorrentAPI:
             'decrease_priority': [],
             'set_top_priority': [],
             'set_bottom_priority': [],
+            'set_file_priority': [],
         }
 
     def get_torrent(self, torrent_hash):
@@ -281,6 +282,11 @@ class MockQBittorrentAPI:
     def set_bottom_priority(self, hashes):
         """Set minimum torrent priority."""
         self.calls['set_bottom_priority'].append(hashes)
+        return True
+
+    def set_file_priority(self, torrent_hash, file_ids, priority):
+        """Set the priority of individual files in one torrent."""
+        self.calls['set_file_priority'].append((torrent_hash, list(file_ids), priority))
         return True
 
 

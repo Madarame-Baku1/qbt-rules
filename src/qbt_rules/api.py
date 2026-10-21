@@ -294,6 +294,20 @@ class QBittorrentAPI:
         )
         return True
 
+    def set_file_priority(self, torrent_hash: str, file_ids: List[int], priority: int) -> bool:
+        """
+        Set the download priority of individual files in one torrent
+
+        Args:
+            torrent_hash: Torrent hash
+            file_ids: File indices, as /torrents/files reports them
+            priority: 0 (do not download), 1 (normal), 6 (high), 7 (maximum)
+        """
+        self.client.torrents_file_priority(
+            torrent_hash=torrent_hash, file_ids=file_ids, priority=priority
+        )
+        return True
+
     # Priority Methods
 
     def increase_priority(self, hashes: List[str]) -> bool:
