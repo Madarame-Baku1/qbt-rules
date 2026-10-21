@@ -24,6 +24,32 @@ Currently-open items only. Resolved bugs and their postmortems live in
   one schema shape) once there's a concrete CRUD surface driving the
   requirements, rather than guessing at the shape in advance.
 
+- **Rules editor: what's next.** The editor (`/rules/edit`, `dev/rules-editor`)
+  edits rules.yml as a whole document -- GET/PUT `/api/rules/source` with
+  ETag/If-Match -- which is deliberately *not* the per-resource CRUD API the
+  `kind:`/`spec:` item above is waiting for: one document, one shape, no
+  routing. The trigger for revisiting that item is the next step here, a
+  structured builder (the `ui/demo-rule-builder*.html` concepts) that edits
+  one rule or one `refs` block at a time -- that needs addressable
+  resources, and ruamel.yaml round-tripping to patch them without losing
+  comments (PyYAML stays the parser that decides meaning; ruamel reads some
+  scalars differently). Other follow-ups:
+  - config.yml editing. Read-only today: it holds credentials (shown
+    masked), is only read at startup, and a bad save stops the server from
+    starting instead of leaving old rules running. Needs masked values
+    merged back on save, a restart-required flow, and stricter validation
+    than YAML-parses.
+  - Dry-run an unsaved buffer. The editor's Dry run runs the saved file
+    through the normal job queue; testing a candidate needs a job that
+    carries its own rules.
+  - Schema autocomplete beyond keys/fields/operators/actions (ace-linters +
+    a JSON Schema would add hover docs and structural completion).
+
+- **`start`/`stop` idempotency check on qBittorrent 5.** `engine.py`'s
+  `_should_skip_idempotent()` tests for `'paused'` in the torrent's state,
+  but qBittorrent 5 reports `stoppedUP`/`stoppedDL`: `start` is always
+  skipped as "already running" and `stop` never is.
+
 ## Decided against (don't re-propose without reading this first)
 
 - **`priority:` field on rules** — documented in the advanced example,
