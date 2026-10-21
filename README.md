@@ -53,6 +53,8 @@ services:
       QBT_RULES_QBITTORRENT_HOST: "http://qbittorrent:8080"
       QBT_RULES_QBITTORRENT_USERNAME: "admin"
       QBT_RULES_QBITTORRENT_PASSWORD: "adminpass"
+      # PUID: 1000   # user/group the container runs as and that owns /config
+      # PGID: 1000   # (default 1000:1000; Unraid uses 99:100)
 ```
 
 Default `config.yml`/`rules.yml` are created automatically in `/config` on first run if they don't already exist.
