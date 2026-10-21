@@ -5,10 +5,11 @@ Wraps qbittorrent-api package for multi-version support (v4.1+ through v5.1.4+)
 Maintains backward compatibility with existing qbt-rules interface
 """
 
-import qbittorrentapi
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Optional
 
-from qbt_rules.errors import AuthenticationError, ConnectionError, APIError
+import qbittorrentapi
+
+from qbt_rules.errors import AuthenticationError, ConnectionError
 from qbt_rules.logging import get_logger
 
 logger = get_logger(__name__)
@@ -75,11 +76,11 @@ class QBittorrentAPI:
             logger.debug(f"Web API version: {self.client.app_web_api_version()}")
 
         except qbittorrentapi.LoginFailed as e:
-            raise AuthenticationError(self.host, str(e))
+            raise AuthenticationError(self.host, str(e)) from e
         except qbittorrentapi.APIConnectionError as e:
-            raise ConnectionError(self.host, str(e))
+            raise ConnectionError(self.host, str(e)) from e
         except Exception as e:
-            raise ConnectionError(self.host, str(e))
+            raise ConnectionError(self.host, str(e)) from e
 
     # Torrent Information Methods
 

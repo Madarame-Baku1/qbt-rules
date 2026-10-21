@@ -147,17 +147,33 @@ def get_server_config(args, config_obj) -> dict:
     }, parsers={'port': parse_int, 'workers': parse_int})
 
 
+# The api_key value config.default.yml ships with, for both server and client
+PLACEHOLDER_API_KEY = 'your-secure-api-key-here-generate-a-random-key'
+
+
 def get_client_config(args, config_obj) -> dict:
     """
     Get client configuration from CLI args, env vars, or config file
 
+    When no client key is set -- or it's still the placeholder from the
+    copied config.default.yml -- the server's key is used instead. The
+    usual client is `docker exec <container> qbt-rules ...` inside the
+    server's own container, where the server key is right there; without
+    this, a setup that only sets QBT_RULES_SERVER_API_KEY sent the
+    placeholder and every CLI command failed authentication.
+
     Returns:
         Dictionary with client configuration
     """
-    return resolve_section_config(args, config_obj, 'client', {
+    client = resolve_section_config(args, config_obj, 'client', {
         'server_url': 'http://localhost:5000',
         'api_key': None,
     })
+    if not client['api_key'] or client['api_key'] == PLACEHOLDER_API_KEY:
+        server_key = get_server_config(args, config_obj)['api_key']
+        if server_key:
+            client['api_key'] = server_key
+    return client
 
 
 def get_queue_config(args, config_obj) -> dict:
@@ -412,20 +428,32 @@ def run_client_mode(args, config_obj):
     logger.info(f"Submitting job to {server_url}")
     logger.info(f"  Context: {context or 'none'}")
     logger.info(f"  Hash: {hash_filter or 'all torrents'}")
+    dry_run = bool(getattr(args, 'dry_run', False))
+    if dry_run:
+        logger.info("  Dry run: yes")
+
+    params = {
+        'context': context,
+        'hash': hash_filter,
+        'key': api_key
+    }
+    if dry_run:
+        params['dry_run'] = 'true'
 
     try:
         response = requests.post(
             f"{server_url}/api/execute",
-            params={
-                'context': context,
-                'hash': hash_filter,
-                'key': api_key
-            },
+            params=params,
             timeout=10
         )
 
         if response.status_code == 202:
             job = response.json()
+            if dry_run and job.get('dry_run') is not True:
+                # A server older than per-job dry-run ignores the parameter
+                # and would run the job for real -- cancel it before it starts
+                _cancel_unconfirmed_dry_run(server_url, api_key, job['job_id'])
+                sys.exit(1)
             logger.info(f"✓ Job queued: {job['job_id']}")
             logger.info(f"  Status: {job['status']}")
             logger.info(f"  Queued at: {job['created_at']}")
@@ -452,6 +480,25 @@ def run_client_mode(args, config_obj):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         sys.exit(1)
+
+
+def _cancel_unconfirmed_dry_run(server_url: str, api_key: str, job_id: str):
+    """Cancel a job the server queued without the dry-run the client asked for"""
+    logger.error("The server didn't confirm dry-run for this job (it's older than "
+                 "per-job dry-run support), so it would have run for real.")
+    try:
+        response = requests.delete(f"{server_url}/api/jobs/{job_id}",
+                                   params={'key': api_key}, timeout=10)
+        cancelled = response.status_code == 200
+    except requests.exceptions.RequestException:
+        cancelled = False
+    if cancelled:
+        logger.error(f"Cancelled job {job_id} before it ran.")
+    else:
+        logger.error(f"Could not cancel job {job_id}; it may already be running. "
+                     f"Check it with --job-status {job_id}.")
+    logger.error("Upgrade the server, or set dry_run on the server instead "
+                 "(QBT_RULES_DRY_RUN=true).")
 
 
 def wait_for_job(server_url: str, api_key: str, job_id: str):

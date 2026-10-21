@@ -189,6 +189,16 @@ class TestRedisQueueKeyBuilding:
 class TestRedisQueueEnqueue:
     """Test job enqueueing"""
 
+    def test_enqueue_dry_run_round_trips(self, queue):
+        assert queue.get_job(queue.enqueue(context='manual', dry_run=True))['dry_run'] is True
+        assert queue.get_job(queue.enqueue(context='manual'))['dry_run'] is False
+
+    def test_job_without_dry_run_field_reads_as_false(self, queue):
+        """Jobs queued before per-job dry-run have no dry_run field in their hash"""
+        job_id = queue.enqueue(context='manual')
+        queue.redis.hdel(queue._key('jobs', job_id), 'dry_run')
+        assert queue.get_job(job_id)['dry_run'] is False
+
     def test_enqueue_returns_job_id(self, queue):
         """Should return generated job ID"""
         job_id = queue.enqueue()

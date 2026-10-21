@@ -33,7 +33,7 @@ class SQLiteQueue(QueueManager):
     Thread safety via connection-per-thread pattern.
     """
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
     BUSY_TIMEOUT_MS = 5000
 
     def __init__(self, db_path: str = '/config/qbt-rules.db'):
@@ -134,12 +134,14 @@ class SQLiteQueue(QueueManager):
         current_version = cursor.fetchone()[0]
 
         if current_version is None:
-            # Initial schema creation
+            # Initial schema creation: v1, then the same migrations an
+            # existing database gets, so both paths end up identical
             self._create_schema_v1(conn)
-            conn.execute('INSERT INTO schema_version (version) VALUES (?)', (self.SCHEMA_VERSION,))
-            logger.info(f"Created database schema v{self.SCHEMA_VERSION}")
-        elif current_version < self.SCHEMA_VERSION:
-            # Run migrations
+            conn.execute('INSERT INTO schema_version (version) VALUES (1)')
+            logger.info("Created database schema v1")
+            current_version = 1
+
+        if current_version < self.SCHEMA_VERSION:
             self._migrate_schema(conn, current_version)
 
     def _create_schema_v1(self, conn: sqlite3.Connection):
@@ -186,15 +188,16 @@ class SQLiteQueue(QueueManager):
             conn: Database connection
             from_version: Current schema version
         """
-        # Future migrations would go here
-        # Example:
-        # if from_version < 2:
-        #     self._migrate_to_v2(conn)
-        #     conn.execute('INSERT INTO schema_version (version) VALUES (2)')
+        if from_version < 2:
+            # v2: per-job dry-run, so `qbt-rules --dry-run --context ...` (and
+            # /api/execute?dry_run=true) dry-run that job on a live server
+            conn.execute('ALTER TABLE jobs ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 0')
+            conn.execute('INSERT INTO schema_version (version) VALUES (2)')
 
         logger.info(f"Schema migration from v{from_version} to v{self.SCHEMA_VERSION} completed")
 
-    def enqueue(self, context: Optional[str] = None, hash_filter: Optional[str] = None) -> str:
+    def enqueue(self, context: Optional[str] = None, hash_filter: Optional[str] = None,
+                dry_run: bool = False) -> str:
         """Add job to queue"""
         job_id = self.generate_job_id()
         created_at = datetime.now(timezone.utc)
@@ -202,9 +205,10 @@ class SQLiteQueue(QueueManager):
         with self._transaction() as conn:
             # Insert job
             conn.execute('''
-                INSERT INTO jobs (id, context, hash, status, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (job_id, context, hash_filter, JobStatus.PENDING, created_at.isoformat()))
+                INSERT INTO jobs (id, context, hash, status, created_at, dry_run)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (job_id, context, hash_filter, JobStatus.PENDING, created_at.isoformat(),
+                  1 if dry_run else 0))
 
             # Add to queue
             conn.execute('''
@@ -440,6 +444,7 @@ class SQLiteQueue(QueueManager):
             'job_id': row['id'],
             'context': row['context'],
             'hash': row['hash'],
+            'dry_run': bool(row['dry_run']),
             'status': row['status'],
             'created_at': datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
             'started_at': datetime.fromisoformat(row['started_at']) if row['started_at'] else None,

@@ -81,7 +81,9 @@ client:
   # Env: QBT_RULES_CLIENT_SERVER_URL or QBT_RULES_CLIENT_SERVER_URL_FILE
   server_url: http://localhost:5000
 
-  # API key for client authentication (must match server.api_key)
+  # API key for client authentication (must match server.api_key). Leave it
+  # as is, or unset, to use server.api_key -- right for `docker exec` into the
+  # server's own container
   # Env: QBT_RULES_CLIENT_API_KEY or QBT_RULES_CLIENT_API_KEY_FILE
   api_key: your-secure-api-key-here-generate-a-random-key
 

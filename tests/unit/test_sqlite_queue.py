@@ -100,7 +100,7 @@ class TestSQLiteQueueInitialization:
         version = cursor.fetchone()[0]
 
         assert version == SQLiteQueue.SCHEMA_VERSION
-        assert version == 1
+        assert version == 2
 
         conn.close()
         queue.close()
@@ -210,18 +210,53 @@ class TestSQLiteQueueInitialization:
         conn.commit()
         conn.close()
 
-        # Initialize queue - should trigger migration from v0 to v1
+        # Initialize queue - should trigger migration from v0 to the current version
         with caplog.at_level(logging.INFO):
             queue = SQLiteQueue(db_path=str(db_path))
 
-        # Verify migration path was executed (lines 118 and 170)
-        # The migration completion log message should be present
-        assert any("Schema migration from v0 to v1 completed" in record.message
-                   for record in caplog.records)
+        assert any(f"Schema migration from v0 to v{SQLiteQueue.SCHEMA_VERSION} completed"
+                   in record.message for record in caplog.records)
+        queue.close()
 
-        # Note: Version stays at 0 because _migrate_schema is currently a placeholder
-        # with no actual migration code. When real migrations are added, they will
-        # update the version. The important thing is that the migration path was executed.
+    def test_v1_database_migrates_to_v2_keeping_jobs(self, tmp_path):
+        """A v1 database (before per-job dry-run) gains jobs.dry_run, existing jobs default to False"""
+        db_path = tmp_path / "test.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute('CREATE TABLE schema_version (version INTEGER PRIMARY KEY, '
+                     'applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)')
+        conn.execute('INSERT INTO schema_version (version) VALUES (1)')
+        conn.execute('''CREATE TABLE jobs (id TEXT PRIMARY KEY, context TEXT, hash TEXT,
+                        status TEXT NOT NULL, created_at TIMESTAMP NOT NULL, started_at TIMESTAMP,
+                        completed_at TIMESTAMP, result TEXT, error TEXT)''')
+        conn.execute('''CREATE TABLE queue (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        job_id TEXT NOT NULL UNIQUE, priority INTEGER DEFAULT 0)''')
+        conn.execute("INSERT INTO jobs (id, context, status, created_at) "
+                     "VALUES ('old-job', 'nightly', 'completed', '2026-10-01T00:00:00+00:00')")
+        conn.commit()
+        conn.close()
+
+        queue = SQLiteQueue(db_path=str(db_path))
+
+        assert queue.get_job('old-job')['dry_run'] is False
+        new_id = queue.enqueue(context='manual', dry_run=True)
+        assert queue.get_job(new_id)['dry_run'] is True
+        conn = sqlite3.connect(str(db_path))
+        assert conn.execute('SELECT MAX(version) FROM schema_version').fetchone()[0] == 2
+        conn.close()
+        queue.close()
+
+    def test_reopening_current_database_does_not_migrate_again(self, tmp_path):
+        """A second open of a v2 database must not try to add the column twice"""
+        db_path = tmp_path / "test.db"
+        SQLiteQueue(db_path=str(db_path)).close()
+        queue = SQLiteQueue(db_path=str(db_path))
+        assert queue.get_job(queue.enqueue(dry_run=True))['dry_run'] is True
+        queue.close()
+
+    def test_enqueue_defaults_to_not_dry_run(self, tmp_path):
+        queue = SQLiteQueue(db_path=str(tmp_path / "test.db"))
+        assert queue.get_job(queue.enqueue(context='manual'))['dry_run'] is False
+        queue.close()
 
         queue.close()
 

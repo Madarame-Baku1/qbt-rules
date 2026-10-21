@@ -15,6 +15,7 @@ from qbt_rules.cli import (
     get_qbittorrent_config,
     get_server_config,
     get_client_config,
+    PLACEHOLDER_API_KEY,
     get_queue_config,
     get_notifications_config,
     run_server_mode,
@@ -500,6 +501,50 @@ class TestGetClientConfig:
         assert config['server_url'] == 'http://server.local:8000'
         assert config['api_key'] == 'client-key'
 
+    def test_falls_back_to_server_key_when_unset(self, monkeypatch):
+        """docker exec inside the server's container: only the server key is set"""
+        monkeypatch.delenv('QBT_RULES_CLIENT_API_KEY', raising=False)
+        monkeypatch.setenv('QBT_RULES_SERVER_API_KEY', 'server-key')
+
+        config = get_client_config(Namespace(), Mock(config={}))
+
+        assert config['api_key'] == 'server-key'
+
+    def test_falls_back_when_client_key_is_the_shipped_placeholder(self, monkeypatch):
+        """The copied config.default.yml carries a placeholder client key"""
+        monkeypatch.delenv('QBT_RULES_CLIENT_API_KEY', raising=False)
+        monkeypatch.setenv('QBT_RULES_SERVER_API_KEY', 'server-key')
+        config_obj = Mock(config={'client': {'api_key': PLACEHOLDER_API_KEY},
+                                  'server': {'api_key': PLACEHOLDER_API_KEY}})
+
+        config = get_client_config(Namespace(), config_obj)
+
+        assert config['api_key'] == 'server-key'
+
+    def test_explicit_client_key_wins_over_server_key(self, monkeypatch):
+        monkeypatch.setenv('QBT_RULES_CLIENT_API_KEY', 'client-key')
+        monkeypatch.setenv('QBT_RULES_SERVER_API_KEY', 'server-key')
+
+        config = get_client_config(Namespace(), Mock(config={}))
+
+        assert config['api_key'] == 'client-key'
+
+    def test_placeholder_stays_when_no_server_key_either(self, monkeypatch):
+        monkeypatch.delenv('QBT_RULES_CLIENT_API_KEY', raising=False)
+        monkeypatch.delenv('QBT_RULES_SERVER_API_KEY', raising=False)
+        config_obj = Mock(config={'client': {'api_key': PLACEHOLDER_API_KEY}})
+
+        config = get_client_config(Namespace(), config_obj)
+
+        assert config['api_key'] == PLACEHOLDER_API_KEY
+
+    def test_shipped_default_config_has_the_placeholder(self):
+        """PLACEHOLDER_API_KEY must track config.default.yml"""
+        from pathlib import Path
+        import yaml
+        default = yaml.safe_load((Path(__file__).parents[2] / 'config' / 'config.default.yml').read_text())
+        assert default['client']['api_key'] == PLACEHOLDER_API_KEY
+
 
 class TestGetQueueConfig:
     """Test get_queue_config() function"""
@@ -709,6 +754,54 @@ class TestRunServerMode:
 
 class TestRunClientMode:
     """Test run_client_mode() function"""
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(context='manual', hash=None, wait=False,
+                      client_server_url='http://localhost:5000', client_api_key='test-key',
+                      dry_run=False)
+        values.update(overrides)
+        return Namespace(**values)
+
+    @staticmethod
+    def _accepted(job):
+        response = Mock(status_code=202)
+        response.json.return_value = {'job_id': 'job-123', 'status': 'pending',
+                                      'created_at': '2024-01-01T00:00:00Z', **job}
+        return response
+
+    @patch('qbt_rules.cli.logger')
+    @patch('qbt_rules.cli.requests.post')
+    def test_dry_run_flag_is_sent_to_server(self, mock_post, mock_logger):
+        """--dry-run used to be dropped, so the job ran for real"""
+        mock_post.return_value = self._accepted({'dry_run': True})
+
+        run_client_mode(self._args(dry_run=True), Mock(config={}))
+
+        assert mock_post.call_args[1]['params']['dry_run'] == 'true'
+
+    @patch('qbt_rules.cli.logger')
+    @patch('qbt_rules.cli.requests.post')
+    def test_no_dry_run_param_without_flag(self, mock_post, mock_logger):
+        mock_post.return_value = self._accepted({'dry_run': False})
+
+        run_client_mode(self._args(), Mock(config={}))
+
+        assert 'dry_run' not in mock_post.call_args[1]['params']
+
+    @patch('qbt_rules.cli.logger')
+    @patch('qbt_rules.cli.requests.delete')
+    @patch('qbt_rules.cli.requests.post')
+    def test_cancels_job_when_server_ignores_dry_run(self, mock_post, mock_delete, mock_logger):
+        """An older server drops the parameter and would run for real: cancel and fail"""
+        mock_post.return_value = self._accepted({})  # no dry_run field at all
+        mock_delete.return_value = Mock(status_code=200)
+
+        with pytest.raises(SystemExit) as exc:
+            run_client_mode(self._args(dry_run=True, wait=True), Mock(config={}))
+
+        assert exc.value.code == 1
+        assert mock_delete.call_args[0][0] == 'http://localhost:5000/api/jobs/job-123'
 
     @patch('qbt_rules.cli.logger')
     @patch('qbt_rules.cli.validate_torrent_hash')
