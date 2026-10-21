@@ -37,7 +37,6 @@ services:
       QBT_RULES_QBITTORRENT_USERNAME: admin
       QBT_RULES_QBITTORRENT_PASSWORD: adminpass
       QBT_RULES_SERVER_API_KEY: change-me      # API + dashboard login
-      QBT_RULES_CLIENT_API_KEY: change-me      # same key, for `docker exec ... qbt-rules`
       QBT_RULES_DRY_RUN: "true"                # log what rules would do; set false when happy
 ```
 
@@ -74,7 +73,7 @@ Left unattended, a qBittorrent instance turns into digital clutter: uncategorize
 
 ### Start it
 
-Save the `docker-compose.yml` above, set your qBittorrent address and credentials, and replace both `change-me` keys with the same long random string. To run as a specific user and group that owns `./config`, add `PUID` and `PGID` (default `1000`; Unraid uses `99`/`100`).
+Save the `docker-compose.yml` above, set your qBittorrent address and credentials, and replace `change-me` with a long random string. To run as a specific user and group that owns `./config`, add `PUID` and `PGID` (default `1000`; Unraid uses `99`/`100`).
 
 ```bash
 docker compose up -d
@@ -114,6 +113,9 @@ rules:
 ```bash
 # Run the torrent-imported rules now (a dry run while QBT_RULES_DRY_RUN is true)
 docker compose exec qbt-rules qbt-rules --context torrent-imported --wait
+
+# Once dry-run is off on the server, --dry-run still previews a single run
+docker compose exec qbt-rules qbt-rules --dry-run --context torrent-imported --wait
 
 # Or via the HTTP API
 curl -X POST "http://localhost:5000/api/execute?context=torrent-imported&key=change-me"
