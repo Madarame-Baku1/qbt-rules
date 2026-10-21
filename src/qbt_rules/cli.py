@@ -147,17 +147,33 @@ def get_server_config(args, config_obj) -> dict:
     }, parsers={'port': parse_int, 'workers': parse_int})
 
 
+# The api_key value config.default.yml ships with, for both server and client
+PLACEHOLDER_API_KEY = 'your-secure-api-key-here-generate-a-random-key'
+
+
 def get_client_config(args, config_obj) -> dict:
     """
     Get client configuration from CLI args, env vars, or config file
 
+    When no client key is set -- or it's still the placeholder from the
+    copied config.default.yml -- the server's key is used instead. The
+    usual client is `docker exec <container> qbt-rules ...` inside the
+    server's own container, where the server key is right there; without
+    this, a setup that only sets QBT_RULES_SERVER_API_KEY sent the
+    placeholder and every CLI command failed authentication.
+
     Returns:
         Dictionary with client configuration
     """
-    return resolve_section_config(args, config_obj, 'client', {
+    client = resolve_section_config(args, config_obj, 'client', {
         'server_url': 'http://localhost:5000',
         'api_key': None,
     })
+    if not client['api_key'] or client['api_key'] == PLACEHOLDER_API_KEY:
+        server_key = get_server_config(args, config_obj)['api_key']
+        if server_key:
+            client['api_key'] = server_key
+    return client
 
 
 def get_queue_config(args, config_obj) -> dict:

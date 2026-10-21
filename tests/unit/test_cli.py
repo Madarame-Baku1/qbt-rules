@@ -15,6 +15,7 @@ from qbt_rules.cli import (
     get_qbittorrent_config,
     get_server_config,
     get_client_config,
+    PLACEHOLDER_API_KEY,
     get_queue_config,
     get_notifications_config,
     run_server_mode,
@@ -499,6 +500,50 @@ class TestGetClientConfig:
 
         assert config['server_url'] == 'http://server.local:8000'
         assert config['api_key'] == 'client-key'
+
+    def test_falls_back_to_server_key_when_unset(self, monkeypatch):
+        """docker exec inside the server's container: only the server key is set"""
+        monkeypatch.delenv('QBT_RULES_CLIENT_API_KEY', raising=False)
+        monkeypatch.setenv('QBT_RULES_SERVER_API_KEY', 'server-key')
+
+        config = get_client_config(Namespace(), Mock(config={}))
+
+        assert config['api_key'] == 'server-key'
+
+    def test_falls_back_when_client_key_is_the_shipped_placeholder(self, monkeypatch):
+        """The copied config.default.yml carries a placeholder client key"""
+        monkeypatch.delenv('QBT_RULES_CLIENT_API_KEY', raising=False)
+        monkeypatch.setenv('QBT_RULES_SERVER_API_KEY', 'server-key')
+        config_obj = Mock(config={'client': {'api_key': PLACEHOLDER_API_KEY},
+                                  'server': {'api_key': PLACEHOLDER_API_KEY}})
+
+        config = get_client_config(Namespace(), config_obj)
+
+        assert config['api_key'] == 'server-key'
+
+    def test_explicit_client_key_wins_over_server_key(self, monkeypatch):
+        monkeypatch.setenv('QBT_RULES_CLIENT_API_KEY', 'client-key')
+        monkeypatch.setenv('QBT_RULES_SERVER_API_KEY', 'server-key')
+
+        config = get_client_config(Namespace(), Mock(config={}))
+
+        assert config['api_key'] == 'client-key'
+
+    def test_placeholder_stays_when_no_server_key_either(self, monkeypatch):
+        monkeypatch.delenv('QBT_RULES_CLIENT_API_KEY', raising=False)
+        monkeypatch.delenv('QBT_RULES_SERVER_API_KEY', raising=False)
+        config_obj = Mock(config={'client': {'api_key': PLACEHOLDER_API_KEY}})
+
+        config = get_client_config(Namespace(), config_obj)
+
+        assert config['api_key'] == PLACEHOLDER_API_KEY
+
+    def test_shipped_default_config_has_the_placeholder(self):
+        """PLACEHOLDER_API_KEY must track config.default.yml"""
+        from pathlib import Path
+        import yaml
+        default = yaml.safe_load((Path(__file__).parents[2] / 'config' / 'config.default.yml').read_text())
+        assert default['client']['api_key'] == PLACEHOLDER_API_KEY
 
 
 class TestGetQueueConfig:
