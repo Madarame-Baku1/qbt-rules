@@ -1,5 +1,5 @@
 """Version information for qbt-rules"""
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 __author__ = "qbt-rules"
 __description__ = "A powerful Python-based rules engine for qBittorrent automation with client-server architecture"
