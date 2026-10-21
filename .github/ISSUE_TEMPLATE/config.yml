@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or help writing a rule
+    url: https://github.com/andronics/qbt-rules/discussions
+    about: Ask in Discussions. Answers there help the next person too.
+  - name: Documentation
+    url: https://github.com/andronics/qbt-rules/wiki
+    about: Fields, operators, actions and examples.

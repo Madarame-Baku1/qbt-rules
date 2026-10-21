@@ -1,0 +1,23 @@
+name: Feature request
+description: A new action, field, operator or other improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you're trying to do
+      description: The problem or workflow, not just the feature. "I want to stop downloading sample files" is more useful than "add an action".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work
+      description: Optional. A sketch of the rule you'd like to be able to write is ideal.
+      render: yaml
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd be willing to open a PR for this
