@@ -1,12 +1,49 @@
 # qbt-rules
 
-A client-server automation engine for qBittorrent with an HTTP API, a persistent job queue, and Docker-first deployment.
+Rules for qBittorrent: write what should happen to your torrents in YAML, and qbt-rules keeps doing it, when a torrent is added, when it finishes, on a schedule, or whenever you ask.
 
 [![GitHub Release](https://img.shields.io/github/v/release/andronics/qbt-rules)](https://github.com/andronics/qbt-rules/releases)
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io-blue)](https://github.com/andronics/qbt-rules/pkgs/container/qbt-rules)
 [![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](http://unlicense.org/)
 
-**📖 [Full documentation lives on the wiki](https://github.com/andronics/qbt-rules/wiki)** — this README covers the pitch and getting started; everything else links out from here.
+```yaml
+rules:
+  - id: skip-sample-files
+    meta:
+      description: "Don't download sample files"
+    context: torrent-imported          # run when qBittorrent adds a torrent
+    conditions:
+      all:
+        - field: files.name
+          operator: matches
+          value: '(?i)(^|/)sample'
+    actions:
+      - type: set_file_priority
+        params:
+          priority: skip
+          pattern: '(?i)(^|/)sample'
+```
+
+```yaml
+# docker-compose.yml
+services:
+  qbt-rules:
+    image: ghcr.io/andronics/qbt-rules:latest
+    restart: unless-stopped
+    ports: ["5000:5000"]
+    volumes: ["./config:/config"]
+    environment:
+      QBT_RULES_QBITTORRENT_HOST: http://qbittorrent:8080
+      QBT_RULES_QBITTORRENT_USERNAME: admin
+      QBT_RULES_QBITTORRENT_PASSWORD: adminpass
+      QBT_RULES_SERVER_API_KEY: change-me      # API + dashboard login
+      QBT_RULES_CLIENT_API_KEY: change-me      # same key, for `docker exec ... qbt-rules`
+      QBT_RULES_DRY_RUN: "true"                # log what rules would do; set false when happy
+```
+
+![qbt-rules dashboard](docs/images/dashboard.png)
+
+**📖 [Documentation lives on the wiki](https://github.com/andronics/qbt-rules/wiki)**
 
 ---
 
@@ -19,11 +56,12 @@ Left unattended, a qBittorrent instance turns into digital clutter: uncategorize
 - **Declarative YAML rules** — no coding required
 - **Reusable references** — define a variable, condition, or action sequence once under `refs:`, reuse it everywhere ([docs](https://github.com/andronics/qbt-rules/wiki/Reusable-References))
 - **Free-form execution contexts** — webhooks, cron sweeps, manual runs; no fixed trigger list ([docs](https://github.com/andronics/qbt-rules/wiki/Contexts))
-- **Rich conditions** — AND/OR/NOT groups, 17+ operators, dot-notation access to 8 qBittorrent API categories
+- **Rich conditions** — AND/OR/NOT groups, 17+ operators, and [fields](https://github.com/andronics/qbt-rules/wiki/Available-Fields) from 8 qBittorrent API categories, plus fleet-wide `stats.*` and optional tracker-side `tracker.*` stats
 - **Idempotent actions** — safe to run repeatedly
+- **Dashboard** — jobs, results and rules at a glance, on the same port as the API
 - **Multi-version qBittorrent support** — v4.1 through v5.1+ via `qbittorrent-api`'s auto-detection
 
-**How it works:** a small HTTP server, backed by a persistent SQLite or Redis job queue and a background worker, evaluates your rules and executes actions — categorize, tag, pause, resume, delete, throttle — against qBittorrent. Jobs survive server restarts, and the whole thing ships as a single Docker image (amd64/arm64, GHCR) with no PyPI package or manual install for end users.
+**How it works:** a small HTTP server, backed by a persistent SQLite or Redis job queue and a background worker, evaluates your rules and executes actions — categorize, tag, pause, resume, delete, throttle, skip files, notify — against qBittorrent. Jobs survive server restarts, and the whole thing ships as a single Docker image (amd64/arm64, GHCR) with no PyPI package or manual install for end users.
 
 ---
 
@@ -34,37 +72,16 @@ Left unattended, a qBittorrent instance turns into digital clutter: uncategorize
 - Docker and Docker Compose
 - qBittorrent with Web UI enabled
 
-### Create `docker-compose.yml`
-
-```yaml
-version: '3.8'
-
-services:
-  qbt-rules:
-    image: ghcr.io/andronics/qbt-rules:latest
-    container_name: qbt-rules
-    restart: unless-stopped
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./config:/config
-    environment:
-      QBT_RULES_SERVER_API_KEY: "your-secure-api-key-here"  # Change this!
-      QBT_RULES_QBITTORRENT_HOST: "http://qbittorrent:8080"
-      QBT_RULES_QBITTORRENT_USERNAME: "admin"
-      QBT_RULES_QBITTORRENT_PASSWORD: "adminpass"
-      # PUID: 1000   # user/group the container runs as and that owns /config
-      # PGID: 1000   # (default 1000:1000; Unraid uses 99:100)
-```
-
-Default `config.yml`/`rules.yml` are created automatically in `/config` on first run if they don't already exist.
-
 ### Start it
 
+Save the `docker-compose.yml` above, set your qBittorrent address and credentials, and replace both `change-me` keys with the same long random string. To run as a specific user and group that owns `./config`, add `PUID` and `PGID` (default `1000`; Unraid uses `99`/`100`).
+
 ```bash
-docker-compose up -d
+docker compose up -d
 curl http://localhost:5000/api/health
 ```
+
+Default `config.yml`/`rules.yml` are created in `./config` on first start. **The default rules include some that delete torrents** — read `rules.yml` before turning dry-run off.
 
 ### Your first rule
 
@@ -95,17 +112,16 @@ rules:
 ### Run it
 
 ```bash
-# Dry-run first
-docker exec qbt-rules qbt-rules --dry-run --context torrent-imported --wait
+# Run the torrent-imported rules now (a dry run while QBT_RULES_DRY_RUN is true)
+docker compose exec qbt-rules qbt-rules --context torrent-imported --wait
 
-# For real
-docker exec qbt-rules qbt-rules --context torrent-imported --wait
-
-# Or via the HTTP API directly
-curl -X POST "http://localhost:5000/api/execute?context=torrent-imported&key=your-api-key"
+# Or via the HTTP API
+curl -X POST "http://localhost:5000/api/execute?context=torrent-imported&key=change-me"
 ```
 
-**Continue with the [Quick Start guide](https://github.com/andronics/qbt-rules/wiki/Quick-Start)** for the full walkthrough, or jump straight to [Contexts](https://github.com/andronics/qbt-rules/wiki/Contexts) to understand how jobs get triggered.
+Open `http://localhost:5000` for the dashboard (log in with the API key). When the results look right, set `QBT_RULES_DRY_RUN: "false"` and `docker compose up -d` again.
+
+**Continue with the [Quick Start guide](https://github.com/andronics/qbt-rules/wiki/Quick-Start)** for the full walkthrough, including triggering rules from qBittorrent's "Run external program" setting, or jump to [Contexts](https://github.com/andronics/qbt-rules/wiki/Contexts) to understand how jobs get triggered.
 
 ---
 
