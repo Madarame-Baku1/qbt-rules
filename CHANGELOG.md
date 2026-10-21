@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > before inserting its own, so a manual entry for a version gets duplicated when that
 > version is tagged.**
 
+## [0.9.0] - 2026-10-21
+
+### ✨ New Features
+- Merge pull request #6 from andronics/dev/set-file-priority
+- feat: set_file_priority action
+
+### 🔧 Maintenance
+- chore: Bump version to 0.9.0
+
+
 ## [0.8.0] - 2026-10-21
 
 ### ✨ New Features
