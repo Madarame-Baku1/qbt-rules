@@ -54,13 +54,15 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # The sha tag is push-only: on PRs ref_type is still "branch" but
+          # {{branch}} is empty, which made an invalid ":-<sha>" tag
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=sha,prefix={{branch}}-,enable=${{ github.ref_type == 'branch' }}
+            type=sha,prefix={{branch}}-,enable=${{ github.ref_type == 'branch' && github.event_name != 'pull_request' }}
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
             type=raw,value=edge,enable={{is_default_branch}}
 

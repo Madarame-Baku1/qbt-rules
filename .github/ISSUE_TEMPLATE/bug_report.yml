@@ -1,0 +1,48 @@
+name: Bug report
+description: Something qbt-rules does wrong, or a rule that behaves differently than documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Questions about how to write a rule are better asked in [Discussions](https://github.com/andronics/qbt-rules/discussions).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what qbt-rules did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: rule
+    attributes:
+      label: Rule
+      description: The rule involved, from rules.yml. Remove anything private (tracker URLs, passkeys, names).
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: Relevant lines from the log, ideally with `logging.level` set to `DEBUG`. Remove anything private.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: qbt-rules version
+      description: Output of `qbt-rules --version`, or the image tag.
+      placeholder: v0.9.0
+    validations:
+      required: true
+  - type: input
+    id: qbittorrent
+    attributes:
+      label: qBittorrent version
+      placeholder: "5.1.2"
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run it
+      options:
+        - Docker / Docker Compose
+        - pip / from source
+        - Other
