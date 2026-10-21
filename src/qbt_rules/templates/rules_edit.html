@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+{% block title %}Edit rules - qbt-rules{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block extra_style %}
+  :root {
+    --c-error: var(--err); --c-warning: var(--warn); --c-info: var(--accent);
+    --diff-add: rgba(34,197,94,.13); --diff-del: rgba(244,63,94,.13);
+  }
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; }
+  main.wide { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+  .ed-toolbar {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    padding: .55rem 1rem; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+  }
+  .ed-tabs { display: flex; gap: .25rem; }
+  .ed-tab {
+    appearance: none; border: 1px solid transparent; background: none; color: var(--fg-dim);
+    font: 600 .8rem var(--font-mono); padding: .35rem .7rem; border-radius: 7px; cursor: pointer;
+  }
+  .ed-tab:hover { color: var(--fg); background: var(--bg-panel-2); }
+  .ed-tab[aria-selected="true"] { color: var(--fg); background: var(--bg-panel-2); border-color: var(--border); }
+  .ed-tab .ro { font: 500 .66rem var(--font-ui); color: var(--muted); margin-left: .35rem; }
+  .ed-state { display: flex; align-items: center; gap: .45rem; font-size: .78rem; color: var(--fg-dim); min-width: 0; }
+  .ed-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+  .ed-dot.dirty { background: var(--warn); }
+  .ed-dot.busy { background: var(--accent); animation: ed-pulse 1s infinite; }
+  @keyframes ed-pulse { 50% { opacity: .35; } }
+  .ed-counts { display: flex; gap: .35rem; }
+  .ed-count { font: 600 .7rem var(--font-mono); padding: .12rem .45rem; border-radius: 999px; cursor: pointer; border: none; }
+  .ed-count.error { background: var(--err-bg); color: var(--err); }
+  .ed-count.warning { background: var(--warn-bg); color: var(--warn); }
+  .ed-count.info { background: var(--accent-soft); color: var(--accent); }
+  .ed-count[hidden] { display: none; }
+  .ed-spacer { flex: 1; }
+  .btn {
+    appearance: none; border: 1px solid var(--border); background: var(--bg-panel-2); color: var(--fg);
+    font: 500 .8rem var(--font-ui); padding: .38rem .8rem; border-radius: 7px; cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--border-strong); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { color: var(--err); }
+  .btn kbd { font: .68rem var(--font-mono); opacity: .7; margin-left: .3rem; }
+
+  .ed-banner { padding: .5rem 1rem; font-size: .8rem; border-bottom: 1px solid var(--border); display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+  .ed-banner.warn { background: var(--warn-bg); color: var(--fg); }
+  .ed-banner.info { background: var(--accent-soft); color: var(--fg); }
+  .ed-banner[hidden] { display: none; }
+
+  .ed-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 270px 1fr; }
+  .ed-side { border-right: 1px solid var(--border); background: var(--bg-panel); overflow: auto; font-size: .8rem; }
+  .ed-side-head { position: sticky; top: 0; background: var(--bg-panel); padding: .6rem .7rem; border-bottom: 1px solid var(--border); z-index: 1; }
+  .ed-side-head input {
+    width: 100%; background: var(--bg-panel-2); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 7px; padding: .35rem .55rem; font: .78rem var(--font-ui);
+  }
+  .ed-section { padding: .35rem 0; }
+  .ed-section h3 {
+    margin: .4rem .8rem .3rem; font-size: .66rem; letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+    display: flex; justify-content: space-between;
+  }
+  .ed-item {
+    display: flex; align-items: baseline; gap: .45rem; padding: .3rem .8rem; cursor: pointer;
+    border-left: 2px solid transparent; min-width: 0;
+  }
+  .ed-item:hover { background: var(--bg-panel-2); }
+  .ed-item.current { border-left-color: var(--accent); background: var(--bg-panel-2); }
+  .ed-item .idx { font: .68rem var(--font-mono); color: var(--muted); flex: none; width: 1.6rem; text-align: right; }
+  .ed-item .name { display: block; font-family: var(--font-mono); font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ed-item .desc { display: block; font-family: var(--font-ui); font-size: .7rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ed-item .main { min-width: 0; flex: 1; }
+  .ed-item.disabled .name { color: var(--muted); text-decoration: line-through; }
+  .ed-item .tag { flex: none; font: 600 .62rem var(--font-mono); padding: .05rem .35rem; border-radius: 999px; }
+  .ed-item .tag.err { background: var(--err-bg); color: var(--err); }
+  .ed-item .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .ed-item .tag.hit { background: var(--ok-bg); color: var(--ok); }
+  .ed-item .tag.stop { background: var(--bg-panel-2); color: var(--muted); border: 1px solid var(--border); }
+  .ed-refs summary { list-style: none; cursor: pointer; padding: .3rem .8rem; color: var(--fg-dim); font-size: .76rem; }
+  .ed-refs summary::-webkit-details-marker { display: none; }
+  .ed-refs summary::before { content: '▸ '; color: var(--muted); }
+  .ed-refs[open] summary::before { content: '▾ '; }
+  .ed-refs .ed-item { padding-left: 1.6rem; }
+
+  .ed-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #ace-host { flex: 1; min-height: 200px; font-size: 13px; position: relative; }
+  /* Match the dashboard's surfaces rather than the Ace theme's own */
+  #ace-host.ace_editor { background: var(--bg-app); }
+  #ace-host .ace_gutter { background: var(--bg-panel); color: var(--muted); }
+  .ace_editor { font-family: var(--font-mono) !important; }
+  .ed-marker-error, .ed-marker-warning, .ed-marker-info { position: absolute; box-sizing: border-box; }
+  .ed-marker-error { border-bottom: 2px solid var(--c-error); background: var(--err-bg); }
+  .ed-marker-warning { border-bottom: 2px dotted var(--c-warning); }
+  .ed-marker-info { border-bottom: 1px dotted var(--c-info); }
+  .ed-flash { position: absolute; background: var(--accent-soft); }
+
+  .ed-problems { border-top: 1px solid var(--border); background: var(--bg-panel); max-height: 32vh; display: flex; flex-direction: column; }
+  .ed-problems.collapsed .ed-problem-list { display: none; }
+  .ed-problems-head {
+    display: flex; align-items: center; gap: .5rem; padding: .35rem .8rem; font-size: .72rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em; cursor: pointer; user-select: none;
+  }
+  .ed-problem-list { overflow: auto; font-size: .78rem; }
+  .ed-problem { display: grid; grid-template-columns: 1.2rem 1fr auto; gap: .5rem; padding: .3rem .8rem; cursor: pointer; align-items: baseline; }
+  .ed-problem:hover { background: var(--bg-panel-2); }
+  .ed-problem .sev { font-weight: 800; font-family: var(--font-mono); }
+  .ed-problem .sev.error { color: var(--c-error); }
+  .ed-problem .sev.warning { color: var(--c-warning); }
+  .ed-problem .sev.info { color: var(--c-info); }
+  .ed-problem .where { font: .7rem var(--font-mono); color: var(--muted); white-space: nowrap; }
+  .ed-problem .msg { color: var(--fg); }
+  .ed-problem .path { display: block; font: .68rem var(--font-mono); color: var(--muted); }
+  .ed-problem-empty { padding: .6rem .8rem; color: var(--muted); font-size: .78rem; }
+
+  .ed-statusbar {
+    display: flex; gap: 1rem; padding: .25rem .8rem; font: .7rem var(--font-mono); color: var(--muted);
+    border-top: 1px solid var(--border); background: var(--bg-panel); flex-wrap: wrap;
+  }
+  .ed-statusbar .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  dialog.ed-modal {
+    border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--bg-panel); color: var(--fg);
+    padding: 0; width: min(980px, calc(100vw - 2rem)); max-height: calc(100vh - 3rem);
+  }
+  dialog.ed-modal::backdrop { background: rgba(5,7,12,.6); }
+  .ed-modal-inner { display: flex; flex-direction: column; max-height: calc(100vh - 3rem); }
+  .ed-modal-head { padding: .9rem 1.1rem .6rem; border-bottom: 1px solid var(--border); }
+  .ed-modal-head h2 { margin: 0; font-size: 1rem; }
+  .ed-modal-head p { margin: .3rem 0 0; font-size: .8rem; color: var(--fg-dim); }
+  .ed-modal-body { overflow: auto; padding: .8rem 1.1rem; flex: 1; }
+  .ed-modal-foot { padding: .7rem 1.1rem; border-top: 1px solid var(--border); display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
+  .ed-modal-foot .note { margin-right: auto; font-size: .75rem; color: var(--muted); }
+
+  .diff { font: .76rem/1.45 var(--font-mono); border: 1px solid var(--border); border-radius: 8px; overflow: auto; }
+  .diff-row { display: grid; grid-template-columns: 3.2rem 3.2rem 1.1rem 1fr; white-space: pre; }
+  .diff-row .ln { color: var(--muted); text-align: right; padding-right: .5rem; user-select: none; }
+  .diff-row .sign { color: var(--muted); user-select: none; }
+  .diff-row.add { background: var(--diff-add); }
+  .diff-row.add .sign { color: var(--ok); }
+  .diff-row.del { background: var(--diff-del); }
+  .diff-row.del .sign { color: var(--err); }
+  .diff-hunk { background: var(--bg-panel-2); color: var(--muted); padding: .2rem .6rem; font-size: .7rem; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .diff-empty { color: var(--muted); padding: 1rem; text-align: center; font-family: var(--font-ui); }
+  .diff-stats { font: .75rem var(--font-mono); margin-bottom: .6rem; color: var(--fg-dim); }
+  .diff-stats .a { color: var(--ok); } .diff-stats .d { color: var(--err); }
+
+  .hist-layout { display: grid; grid-template-columns: 220px 1fr; gap: .8rem; min-height: 300px; }
+  .hist-list { border: 1px solid var(--border); border-radius: 8px; overflow: auto; max-height: 60vh; }
+  .hist-item { padding: .45rem .7rem; cursor: pointer; font-size: .78rem; border-bottom: 1px solid var(--border); }
+  .hist-item:last-child { border-bottom: none; }
+  .hist-item:hover { background: var(--bg-panel-2); }
+  .hist-item.selected { background: var(--accent-soft); }
+  .hist-item .when { display: block; font-weight: 600; }
+  .hist-item .meta { font: .68rem var(--font-mono); color: var(--muted); }
+
+  .field-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-bottom: .8rem; font-size: .82rem; }
+  .field-row select, .field-row input {
+    background: var(--bg-panel-2); border: 1px solid var(--border); color: var(--fg); border-radius: 7px;
+    padding: .35rem .55rem; font: .8rem var(--font-ui);
+  }
+  .run-result table { font-size: .8rem; }
+  .run-result td.num { font-family: var(--font-mono); text-align: right; }
+
+  .ed-toast {
+    position: fixed; right: 1rem; bottom: 1rem; z-index: 50; max-width: 420px; padding: .6rem .9rem; border-radius: 8px;
+    background: var(--bg-panel-2); border: 1px solid var(--border-strong); font-size: .82rem; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  }
+  .ed-toast.ok { border-color: var(--ok); }
+  .ed-toast.err { border-color: var(--err); }
+  .ed-toast[hidden] { display: none; }
+
+  .ed-side-toggle { display: none; }
+  @media (max-width: 860px) {
+    .ed-body { grid-template-columns: 1fr; }
+    .ed-side { display: none; border-right: none; border-bottom: 1px solid var(--border); max-height: 40vh; }
+    .ed-body.show-side .ed-side { display: block; }
+    .ed-side-toggle { display: inline-block; }
+    .ed-state .label { display: none; }
+    .hist-layout { grid-template-columns: 1fr; }
+  }
+{% endblock %}
+{% block content %}
+{% if not config_available %}
+<div style="padding:1.5rem"><div class="card"><p class="empty">The editor is unavailable (server started without a config reference).</p></div></div>
+{% else %}
+<div class="ed-toolbar">
+  <button class="btn ed-side-toggle" id="btn-side" type="button" aria-controls="ed-side">Outline</button>
+  <div class="ed-tabs" role="tablist">
+    <button class="ed-tab" role="tab" id="tab-rules" aria-selected="true" type="button">rules.yml</button>
+    <button class="ed-tab" role="tab" id="tab-config" aria-selected="false" type="button">config.yml<span class="ro">read-only</span></button>
+  </div>
+  <div class="ed-state" aria-live="polite">
+    <span class="ed-dot busy" id="state-dot"></span>
+    <span class="label" id="state-label">Loading…</span>
+    <span class="ed-counts">
+      <button class="ed-count error" id="count-error" type="button" hidden></button>
+      <button class="ed-count warning" id="count-warning" type="button" hidden></button>
+      <button class="ed-count info" id="count-info" type="button" hidden></button>
+    </span>
+  </div>
+  <div class="ed-spacer"></div>
+  <button class="btn" id="btn-history" type="button" title="Versions kept by previous saves">History</button>
+  <button class="btn" id="btn-diff" type="button" title="Compare with the saved file">Changes</button>
+  <button class="btn" id="btn-dryrun" type="button" title="Run the saved rules in dry-run mode">Dry run</button>
+  <button class="btn primary" id="btn-save" type="button" disabled>Save<kbd>Ctrl+S</kbd></button>
+</div>
+<div class="ed-banner warn" id="banner-readonly" hidden></div>
+<div class="ed-banner info" id="banner-draft" hidden>
+  <span id="draft-text"></span>
+  <button class="btn" id="btn-draft-restore" type="button">Restore draft</button>
+  <button class="btn" id="btn-draft-discard" type="button">Discard</button>
+</div>
+<div class="ed-banner info" id="banner-config" hidden>
+  config.yml is shown read-only with credentials masked. It is read once at startup, so changes need a restart &mdash; edit it on disk.
+</div>
+
+<div class="ed-body" id="ed-body">
+  <aside class="ed-side" id="ed-side" aria-label="Outline">
+    <div class="ed-side-head"><input type="search" id="outline-filter" placeholder="Filter rules and refs…" aria-label="Filter outline"></div>
+    <div id="outline"></div>
+  </aside>
+  <div class="ed-main">
+    <div id="ace-host"></div>
+    <div class="ed-problems" id="problems">
+      <div class="ed-problems-head" id="problems-head" role="button" tabindex="0" aria-expanded="true">
+        <span id="problems-caret">▾</span> Problems <span id="problems-summary"></span>
+      </div>
+      <div class="ed-problem-list" id="problem-list"></div>
+    </div>
+    <div class="ed-statusbar">
+      <span id="sb-cursor">Ln 1, Col 1</span>
+      <span class="grow" id="sb-path"></span>
+      <span id="sb-modified"></span>
+    </div>
+  </div>
+</div>
+
+<dialog class="ed-modal" id="modal-diff">
+  <div class="ed-modal-inner">
+    <div class="ed-modal-head"><h2 id="diff-title">Changes</h2><p id="diff-sub"></p></div>
+    <div class="ed-modal-body"><div class="diff-stats" id="diff-stats"></div><div class="diff" id="diff-view"></div></div>
+    <div class="ed-modal-foot">
+      <label class="note"><input type="checkbox" id="opt-review"> Always review changes before saving</label>
+      <button class="btn" type="button" data-close>Close</button>
+      <button class="btn primary" id="btn-diff-save" type="button">Save</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="ed-modal" id="modal-conflict">
+  <div class="ed-modal-inner">
+    <div class="ed-modal-head">
+      <h2>rules.yml changed on disk</h2>
+      <p>Someone (or something) saved rules.yml after you opened it. Below is what changed on disk since then &mdash; your edits are not included.</p>
+    </div>
+    <div class="ed-modal-body"><div class="diff" id="conflict-view"></div></div>
+    <div class="ed-modal-foot">
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn" id="btn-conflict-load" type="button" title="Throw away your edits">Load their version</button>
+      <button class="btn danger" id="btn-conflict-overwrite" type="button" title="Replace their version with yours">Overwrite with mine</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="ed-modal" id="modal-history">
+  <div class="ed-modal-inner">
+    <div class="ed-modal-head"><h2>History</h2><p>Each save keeps the version it replaced. Load one into the editor, then save to restore it.</p></div>
+    <div class="ed-modal-body">
+      <div class="hist-layout">
+        <div class="hist-list" id="hist-list"></div>
+        <div><div class="diff-stats" id="hist-stats"></div><div class="diff" id="hist-view"><div class="diff-empty">Pick a version to compare it with the editor.</div></div></div>
+      </div>
+    </div>
+    <div class="ed-modal-foot">
+      <button class="btn" type="button" data-close>Close</button>
+      <button class="btn primary" id="btn-hist-load" type="button" disabled>Load into editor</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="ed-modal" id="modal-dryrun">
+  <div class="ed-modal-inner">
+    <div class="ed-modal-head"><h2>Dry run</h2><p>Runs the <b>saved</b> rules against every torrent without changing anything. Unsaved edits are not included.</p></div>
+    <div class="ed-modal-body">
+      <div class="field-row">
+        <label for="dry-context">Context</label>
+        <select id="dry-context"></select>
+        <input id="dry-context-custom" placeholder="custom context" hidden>
+      </div>
+      <div id="dry-status" class="muted"></div>
+      <div class="run-result" id="dry-result"></div>
+    </div>
+    <div class="ed-modal-foot">
+      <button class="btn" type="button" data-close>Close</button>
+      <button class="btn primary" id="btn-dry-start" type="button">Start dry run</button>
+    </div>
+  </div>
+</dialog>
+
+<div class="ed-toast" id="toast" role="status" hidden></div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if config_available %}
+<script>
+  window.QBT_EDITOR = {
+    csrfToken: {{ csrf_token()|tojson }},
+    urls: {
+      source: {{ url_for('rules_source')|tojson }},
+      validate: {{ url_for('rules_validate')|tojson }},
+      history: {{ url_for('rules_history')|tojson }},
+      catalog: {{ url_for('rules_catalog')|tojson }},
+      config: {{ url_for('config_source')|tojson }},
+      execute: {{ url_for('execute')|tojson }},
+      jobsApi: {{ url_for('list_jobs')|tojson }},
+      jobsPage: {{ url_for('dashboard_jobs')|tojson }},
+      acePath: {{ url_for('static', filename='vendor/ace')|tojson }}
+    }
+  };
+</script>
+<script src="{{ url_for('static', filename='vendor/ace/ace.js', v=version) }}"></script>
+<script src="{{ url_for('static', filename='vendor/ace/mode-yaml.js', v=version) }}"></script>
+<script src="{{ url_for('static', filename='vendor/ace/ext-language_tools.js', v=version) }}"></script>
+<script src="{{ url_for('static', filename='vendor/ace/ext-searchbox.js', v=version) }}"></script>
+<script src="{{ url_for('static', filename='vendor/ace/theme-tomorrow_night.js', v=version) }}"></script>
+<script src="{{ url_for('static', filename='vendor/ace/theme-tomorrow.js', v=version) }}"></script>
+<script src="{{ url_for('static', filename='editor.js', v=version) }}"></script>
+{% endif %}
+{% endblock %}

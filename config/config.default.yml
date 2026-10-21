@@ -44,6 +44,12 @@ server:
   # Env: QBT_RULES_SERVER_WORKERS or QBT_RULES_SERVER_WORKERS_FILE
   workers: 1
 
+  # Allow saving rules.yml from the dashboard's rules editor (/rules/edit).
+  # false keeps the editor read-only (it still validates). A rules.yml made
+  # read-only on disk (chmod 444) is also never written, whatever this says.
+  # Env: QBT_RULES_SERVER_EDITOR_ENABLED or QBT_RULES_SERVER_EDITOR_ENABLED_FILE
+  editor_enabled: true
+
 # ============================================================================
 # QUEUE CONFIGURATION
 # ============================================================================

@@ -1864,3 +1864,224 @@ class TestMetricsRoutes:
         assert "mark_process_dead" in source
         assert "if metrics_enabled:" in source
         assert "options['child_exit'] = child_exit" in source
+
+
+class TestEditorRoutes:
+    """The rules editor's JSON API (/api/rules/*, /api/config/source) and page"""
+
+    API_KEY = 'test-api-key-12345'
+    RULES = "rules:\n  - id: a  # keep this comment\n    conditions: []\n    actions: [{type: stop}]\n"
+
+    @pytest.fixture
+    def config_dir(self, tmp_path):
+        (tmp_path / 'config.yml').write_text(
+            "server:\n  api_key: hunter2\nqbittorrent:\n  host: http://localhost:8080\n"
+            "schedule:\n  - {cron: '0 * * * *', context: hourly}\n")
+        (tmp_path / 'rules.yml').write_text(self.RULES)
+        return tmp_path
+
+    @pytest.fixture
+    def real_config(self, config_dir):
+        from qbt_rules.config import Config
+        return Config(config_dir)
+
+    @pytest.fixture
+    def make_client(self, mock_queue, mock_worker, real_config):
+        def make(**kwargs):
+            app = create_app(mock_queue, mock_worker, self.API_KEY, config=real_config, **kwargs)
+            app.config['TESTING'] = True
+            return app.test_client()
+        return make
+
+    @pytest.fixture
+    def client(self, make_client):
+        return make_client()
+
+    @pytest.fixture
+    def key(self):
+        return {'X-API-Key': self.API_KEY}
+
+    def login(self, client):
+        """Log in through the form and return the page's CSRF token"""
+        client.post('/login', data={'key': self.API_KEY, 'next': '/rules/edit'})
+        page = client.get('/rules/edit').get_data(as_text=True)
+        import re
+        return re.search(r'csrfToken: "([^"]+)"', page).group(1)
+
+    # -- reading ----------------------------------------------------------
+
+    def test_source_returns_text_and_etag(self, client, key, config_dir):
+        response = client.get('/api/rules/source', headers=key)
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['content'] == self.RULES
+        assert response.headers['ETag'] == f'"{data["etag"]}"'
+        assert data['editable'] is True
+        assert data['path'] == str(config_dir / 'rules.yml')
+
+    def test_source_requires_auth(self, client):
+        assert client.get('/api/rules/source').status_code == 401
+
+    def test_validate(self, client, key):
+        response = client.post('/api/rules/validate', headers=key,
+                               json={'content': 'rules:\n  - id: a\n    actions: []\n'})
+        data = response.get_json()
+        assert response.status_code == 200
+        assert data['valid'] is False
+        assert "missing required field: 'conditions'" in data['issues'][0]['message']
+
+    def test_validate_needs_content(self, client, key):
+        assert client.post('/api/rules/validate', headers=key, json={}).status_code == 400
+
+    def test_catalog_includes_schedule_contexts(self, client, key):
+        data = client.get('/api/rules/catalog', headers=key).get_json()
+        assert 'delete_torrent' in data['actions']
+        assert data['schedule_contexts'] == ['hourly']
+
+    def test_config_source_is_redacted(self, client, key):
+        data = client.get('/api/config/source', headers=key).get_json()
+        assert 'hunter2' not in data['content']
+        assert data['redacted'] == ['server.api_key']
+
+    # -- saving -----------------------------------------------------------
+
+    def put(self, client, content, etag, headers):
+        return client.put('/api/rules/source', json={'content': content},
+                          headers={**headers, 'If-Match': f'"{etag}"'})
+
+    def test_save_writes_file_and_reloads_rules(self, client, key, config_dir, real_config):
+        etag = client.get('/api/rules/source', headers=key).get_json()['etag']
+        new = self.RULES.replace('id: a', 'id: renamed')
+
+        response = self.put(client, new, etag, key)
+
+        assert response.status_code == 200
+        assert response.get_json()['saved'] is True
+        assert (config_dir / 'rules.yml').read_text() == new
+        assert '# keep this comment' in (config_dir / 'rules.yml').read_text()
+        assert real_config.get_rules()[0]['id'] == 'renamed'
+
+        versions = client.get('/api/rules/history', headers=key).get_json()['versions']
+        assert len(versions) == 1
+        old = client.get(f"/api/rules/history/{versions[0]['id']}", headers=key).get_json()
+        assert old['content'] == self.RULES
+
+    def test_save_without_if_match_is_428(self, client, key):
+        response = client.put('/api/rules/source', json={'content': self.RULES}, headers=key)
+        assert response.status_code == 428
+
+    def test_etag_in_body_is_accepted(self, client, key):
+        etag = client.get('/api/rules/source', headers=key).get_json()['etag']
+        response = client.put('/api/rules/source', json={'content': self.RULES + '\n', 'etag': etag}, headers=key)
+        assert response.status_code == 200
+
+    def test_stale_etag_is_412_with_current_content(self, client, key, config_dir):
+        etag = client.get('/api/rules/source', headers=key).get_json()['etag']
+        (config_dir / 'rules.yml').write_text(self.RULES + '# edited elsewhere\n')
+
+        response = self.put(client, self.RULES.replace('id: a', 'id: b'), etag, key)
+
+        assert response.status_code == 412
+        assert response.get_json()['current']['content'].endswith('# edited elsewhere\n')
+        assert (config_dir / 'rules.yml').read_text().endswith('# edited elsewhere\n')
+
+    def test_invalid_content_is_422_and_not_written(self, client, key, config_dir):
+        etag = client.get('/api/rules/source', headers=key).get_json()['etag']
+        bad = "rules:\n  - id: a\n    conditions: []\n    actions:\n      - type: delete_torrent\n" \
+              "        params: {keep_files: true}\n"
+
+        response = self.put(client, bad, etag, key)
+
+        assert response.status_code == 422
+        assert response.get_json()['validation']['counts']['error'] == 1
+        assert (config_dir / 'rules.yml').read_text() == self.RULES
+
+    def test_editor_disabled_is_read_only(self, make_client, key, config_dir):
+        client = make_client(editor=False)
+        source = client.get('/api/rules/source', headers=key).get_json()
+        assert source['editable'] is False
+        assert 'editor_enabled' in source['readonly_reason']
+
+        response = self.put(client, self.RULES + '\n', source['etag'], key)
+        assert response.status_code == 403
+        assert (config_dir / 'rules.yml').read_text() == self.RULES
+
+    def test_read_only_file_is_not_saved(self, client, key, config_dir):
+        if os.geteuid() == 0:
+            pytest.skip('root ignores file permissions')
+        (config_dir / 'rules.yml').chmod(0o444)
+        source = client.get('/api/rules/source', headers=key).get_json()
+        assert source['editable'] is False
+
+        assert self.put(client, self.RULES + '\n', source['etag'], key).status_code == 403
+
+    def test_history_version_not_found(self, client, key):
+        assert client.get('/api/rules/history/20200101T000000000000Z', headers=key).status_code == 404
+        assert client.get('/api/rules/history/..%2Frules.yml', headers=key).status_code == 404
+
+    def test_oversized_body_is_413(self, client, key):
+        response = client.post('/api/rules/validate', headers=key, json={'content': 'x' * (3 * 1024 * 1024)})
+        assert response.status_code == 413
+
+    # -- browser session + CSRF ---------------------------------------------
+
+    def test_session_can_read_without_csrf(self, client):
+        self.login(client)
+        assert client.get('/api/rules/source').status_code == 200
+
+    def test_session_write_requires_csrf_token(self, client, config_dir):
+        self.login(client)
+        etag = client.get('/api/rules/source').get_json()['etag']
+
+        response = client.put('/api/rules/source', json={'content': self.RULES + '\n'},
+                              headers={'If-Match': etag})
+        assert response.status_code == 403
+        assert 'CSRF' in response.get_json()['message']
+
+        response = client.put('/api/rules/source', json={'content': self.RULES + '\n'},
+                              headers={'If-Match': etag, 'X-CSRF-Token': 'wrong'})
+        assert response.status_code == 403
+        assert (config_dir / 'rules.yml').read_text() == self.RULES
+
+    def test_session_write_with_csrf_token(self, client, config_dir):
+        token = self.login(client)
+        etag = client.get('/api/rules/source').get_json()['etag']
+
+        response = client.put('/api/rules/source', json={'content': self.RULES + '\n'},
+                              headers={'If-Match': etag, 'X-CSRF-Token': token})
+
+        assert response.status_code == 200
+        assert (config_dir / 'rules.yml').read_text() == self.RULES + '\n'
+
+    def test_execute_accepts_session_with_csrf(self, client, mock_queue):
+        token = self.login(client)
+        assert client.post('/api/execute?dry_run=true').status_code == 403
+        assert client.post('/api/execute?dry_run=true', headers={'X-CSRF-Token': token}).status_code == 202
+        mock_queue.enqueue.assert_called_once_with(context=None, hash_filter=None, dry_run=True)
+
+    def test_session_cookie_is_samesite_lax(self, client):
+        response = client.post('/login', data={'key': self.API_KEY, 'next': '/'})
+        assert 'SameSite=Lax' in response.headers['Set-Cookie']
+
+    # -- page -----------------------------------------------------------------
+
+    def test_editor_page_requires_login(self, client):
+        response = client.get('/rules/edit')
+        assert response.status_code == 302
+        assert response.headers['Location'].startswith('/login')
+
+    def test_editor_page_renders(self, client):
+        self.login(client)
+        page = client.get('/rules/edit').get_data(as_text=True)
+        assert 'vendor/ace/ace.js' in page
+        assert 'editor.js' in page
+
+    def test_rules_page_links_to_editor(self, client):
+        self.login(client)
+        page = client.get('/rules').get_data(as_text=True)
+        assert '/rules/edit' in page
+        assert '/rules/edit#rule=a' in page
+
+    def test_static_assets_are_served(self, client):
+        assert client.get('/static/editor.js').status_code == 200
+        assert client.get('/static/vendor/ace/ace.js').status_code == 200

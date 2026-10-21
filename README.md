@@ -57,7 +57,7 @@ Left unattended, a qBittorrent instance turns into digital clutter: uncategorize
 - **Free-form execution contexts** — webhooks, cron sweeps, manual runs; no fixed trigger list ([docs](https://github.com/andronics/qbt-rules/wiki/Contexts))
 - **Rich conditions** — AND/OR/NOT groups, 17+ operators, and [fields](https://github.com/andronics/qbt-rules/wiki/Available-Fields) from 8 qBittorrent API categories, plus fleet-wide `stats.*` and optional tracker-side `tracker.*` stats
 - **Idempotent actions** — safe to run repeatedly
-- **Dashboard** — jobs, results and rules at a glance, on the same port as the API
+- **Dashboard** — jobs, results and rules at a glance, plus an in-browser `rules.yml` editor that validates as you type, on the same port as the API
 - **Multi-version qBittorrent support** — v4.1 through v5.1+ via `qbittorrent-api`'s auto-detection
 
 **How it works:** a small HTTP server, backed by a persistent SQLite or Redis job queue and a background worker, evaluates your rules and executes actions — categorize, tag, pause, resume, delete, throttle, skip files, notify — against qBittorrent. Jobs survive server restarts, and the whole thing ships as a single Docker image (amd64/arm64, GHCR) with no PyPI package or manual install for end users.

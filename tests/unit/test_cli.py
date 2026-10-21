@@ -446,6 +446,18 @@ class TestGetServerConfig:
         assert config['workers'] == 4
 
 
+    def test_editor_enabled_defaults_on(self):
+        config = get_server_config(Namespace(), Mock(config={}))
+        assert config['editor_enabled'] is True
+
+    def test_editor_enabled_from_config_and_env(self, monkeypatch):
+        config_obj = Mock(config={'server': {'editor_enabled': False}})
+        assert get_server_config(Namespace(), config_obj)['editor_enabled'] is False
+
+        monkeypatch.setenv('QBT_RULES_SERVER_EDITOR_ENABLED', 'true')
+        assert get_server_config(Namespace(), config_obj)['editor_enabled'] is True
+
+
 class TestGetNotificationsConfig:
     """Test get_notifications_config() function"""
 
@@ -669,7 +681,8 @@ class TestRunServerMode:
             worker_instance=mock_worker,
             api_key='test-key',
             config=config_obj,
-            metrics_config={'enabled': False, 'multiproc_dir': '/tmp/qbt-rules-metrics'}
+            metrics_config={'enabled': False, 'multiproc_dir': '/tmp/qbt-rules-metrics'},
+            editor=True
         )
 
         # Verify server run

@@ -63,6 +63,7 @@
     nav.nav-tabs a:hover { border-color: var(--border-strong); color: var(--fg); }
     nav.nav-tabs a.active { background: var(--accent-soft); border-color: var(--accent); color: var(--fg); }
     main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+    main.wide { max-width: none; padding: 0; margin: 0; width: 100%; }
     .card {
       background: var(--bg-panel);
       border: 1px solid var(--border);
@@ -127,8 +128,9 @@
       <a href="{{ url_for('dashboard_rules') }}" class="{{ 'active' if active == 'rules' else '' }}">Rules</a>
     </nav>
   </header>
-  <main>
+  <main class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
