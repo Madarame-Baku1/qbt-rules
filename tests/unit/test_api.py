@@ -56,32 +56,41 @@ class TestQBittorrentAPIv4Init:
         """Should raise AuthenticationError when login fails"""
         import qbittorrentapi
         mock_client = Mock()
-        mock_client.auth_log_in = Mock(side_effect=qbittorrentapi.LoginFailed("Unauthorized"))
+        original_error = qbittorrentapi.LoginFailed("Unauthorized")
+        mock_client.auth_log_in = Mock(side_effect=original_error)
         mock_client_class.return_value = mock_client
 
-        with pytest.raises(AuthenticationError):
+        with pytest.raises(AuthenticationError) as error:
             QBittorrentAPIv4('http://localhost:8080', 'admin', 'wrong', connect_now=True)
+
+        assert error.value.__cause__ is original_error
 
     @patch('qbt_rules.api.qbittorrentapi.Client')
     def test_init_connection_error_raises(self, mock_client_class):
         """Should raise ConnectionError when cannot reach server"""
         import qbittorrentapi
         mock_client = Mock()
-        mock_client.auth_log_in = Mock(side_effect=qbittorrentapi.APIConnectionError("Connection refused"))
+        original_error = qbittorrentapi.APIConnectionError("Connection refused")
+        mock_client.auth_log_in = Mock(side_effect=original_error)
         mock_client_class.return_value = mock_client
 
-        with pytest.raises(ConnectionError):
+        with pytest.raises(ConnectionError) as error:
             QBittorrentAPIv4('http://localhost:9999', 'admin', 'password', connect_now=True)
+
+        assert error.value.__cause__ is original_error
 
     @patch('qbt_rules.api.qbittorrentapi.Client')
     def test_init_generic_exception_raises_connection_error(self, mock_client_class):
         """Should raise ConnectionError for generic exceptions"""
         mock_client = Mock()
-        mock_client.auth_log_in = Mock(side_effect=Exception("Unexpected error"))
+        original_error = Exception("Unexpected error")
+        mock_client.auth_log_in = Mock(side_effect=original_error)
         mock_client_class.return_value = mock_client
 
-        with pytest.raises(ConnectionError):
+        with pytest.raises(ConnectionError) as error:
             QBittorrentAPIv4('http://localhost:8080', 'admin', 'password', connect_now=True)
+
+        assert error.value.__cause__ is original_error
 
 
 class TestQBittorrentAPIv4TorrentInfo:
