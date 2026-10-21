@@ -144,6 +144,24 @@ rules:
       #   params:
       #     delete_files: true
 
+  - id: skip-sample-files
+    meta:
+      description: "Don't download sample files"
+    enabled: false  # set true to use
+    context: torrent-imported
+    conditions:
+      any:
+        - field: files.name
+          operator: matches
+          value: '(?i)(^|/)sample'
+    actions:
+      # priority: 0/skip, 1/normal, 6/high, 7/maximum. pattern is a regex on
+      # each file's path within the torrent; leave it out to change every file
+      - type: set_file_priority
+        params:
+          priority: skip
+          pattern: '(?i)(^|/)sample'
+
   - id: tag-private-trackers
     meta:
       description: "Tag private tracker torrents"

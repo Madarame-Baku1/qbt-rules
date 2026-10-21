@@ -28,6 +28,10 @@ from qbt_rules import metrics
 
 logger = get_logger(__name__)
 
+# set_file_priority's accepted priorities -- qBittorrent's own values, plus
+# names for readability in rules
+FILE_PRIORITIES = {'skip': 0, 'normal': 1, 'high': 6, 'maximum': 7}
+
 # Pattern for runtime action-param templating: ${info.name}, ${trackers.url},
 # etc -- the per-torrent counterpart to resolver.py's TOKEN_PATTERN, which
 # handles the load-time-only ${vars.*}/${rule.*} tokens and deliberately
@@ -680,6 +684,12 @@ class ActionExecutor:
         elif action_type == 'release_force_start':
             return not torrent.get('force_start')
 
+        elif action_type == 'set_file_priority':
+            # Skip only on a definite "nothing to change"; an unloaded file
+            # list or bad params (None) fall through so _execute_action can
+            # report them instead of logging "already in desired state"
+            return self._file_priority_targets(torrent, params, quiet=True) == []
+
         # Non-idempotent actions
         return False
 
@@ -697,6 +707,11 @@ class ActionExecutor:
             search = bool(params.get('search', True))
             action_desc = "blocklist and search" if search else "blocklist (no search)"
             logger.info(f"  Would {action_desc} for {torrent['name']} via {service}")
+        elif action_type == 'set_file_priority':
+            targets = self._file_priority_targets(torrent, params)
+            if targets is not None:
+                priority = self._parse_file_priority(params.get('priority'))
+                logger.info(f"  Would set priority {priority} on {len(targets)} file(s) of {torrent['name']}")
         else:
             logger.info(f"  Would {action_type} {torrent['name']} (params={params})")
 
@@ -829,6 +844,9 @@ class ActionExecutor:
                 logger.info(f"  Set bottom priority for {torrent['name']}")
             return success
 
+        elif action_type == 'set_file_priority':
+            return self._execute_set_file_priority(torrent, params)
+
         elif action_type == 'notify':
             return self._execute_notify(torrent, params)
 
@@ -838,6 +856,84 @@ class ActionExecutor:
         else:
             logger.error(f"  Unknown action type: {action_type}")
             return False
+
+    def _parse_file_priority(self, value: Any) -> Optional[int]:
+        """set_file_priority's priority param: 0/1/6/7 or skip/normal/high/maximum"""
+        key = str(value).strip().lower()
+        if key in FILE_PRIORITIES:
+            return FILE_PRIORITIES[key]
+        if key.isdigit() and int(key) in FILE_PRIORITIES.values():
+            return int(key)
+        return None
+
+    def _file_priority_targets(self, torrent: Dict, params: Dict,
+                               quiet: bool = False) -> Optional[List[int]]:
+        """
+        File indices set_file_priority would change, or None if it can't run
+
+        Uses the condition evaluator's per-run files cache, so a rule that
+        matched on files.* doesn't fetch the file list a second time.
+        Returns None (after logging why) for a bad priority/pattern or a
+        torrent whose metadata isn't loaded yet (empty file list -- see
+        ConditionEvaluator's files branch), and [] when every matching
+        file already has the requested priority or nothing matches.
+        quiet suppresses the logging, for the idempotency check that runs
+        before the action logs the same problem itself.
+        """
+        priority = self._parse_file_priority(params.get('priority'))
+        if priority is None:
+            if not quiet:
+                logger.error(f"  set_file_priority: invalid priority {params.get('priority')!r} "
+                             f"(expected 0/skip, 1/normal, 6/high or 7/maximum)")
+            return None
+        pattern = params.get('pattern')
+        try:
+            regex = re.compile(pattern) if pattern else None
+        except re.error as e:
+            if not quiet:
+                logger.error(f"  set_file_priority: invalid pattern {pattern!r}: {e}")
+            return None
+
+        files = self._torrent_files(torrent)
+        if not files:
+            if not quiet:
+                logger.warning(f"  set_file_priority: file list for {torrent['name']} not loaded "
+                               f"yet, retried next run")
+            return None
+
+        return [
+            f.get('index', position)
+            for position, f in enumerate(files)
+            if (regex is None or regex.search(f.get('name', '')))
+            and f.get('priority') != priority
+        ]
+
+    def _torrent_files(self, torrent: Dict) -> List[Dict]:
+        """A torrent's file list, from the evaluator's per-run cache when it has one"""
+        cache: Optional[Dict[str, List[Dict]]] = getattr(self.field_resolver, 'files_cache', None)
+        torrent_hash = torrent['hash']
+        if cache is None:
+            return self.api.get_files(torrent_hash)
+        if torrent_hash not in cache:
+            cache[torrent_hash] = self.api.get_files(torrent_hash)
+        return cache[torrent_hash]
+
+    def _execute_set_file_priority(self, torrent: Dict, params: Dict) -> bool:
+        """Set the download priority of a torrent's files, all or those matching a pattern"""
+        targets = self._file_priority_targets(torrent, params)
+        priority = self._parse_file_priority(params.get('priority'))
+        if targets is None or priority is None:
+            return False
+        success = self.api.set_file_priority(torrent['hash'], targets, priority)
+        if success:
+            # Keep the cached list current so later rules this run see the
+            # new priorities (and this action stays idempotent within a run)
+            wanted = set(targets)
+            for position, f in enumerate(self._torrent_files(torrent)):
+                if f.get('index', position) in wanted:
+                    f['priority'] = priority
+            logger.info(f"  Set priority {priority} on {len(targets)} file(s) of {torrent['name']}")
+        return success
 
     def _render_notify_message(self, torrent: Dict, message: Optional[str]) -> Optional[str]:
         """
