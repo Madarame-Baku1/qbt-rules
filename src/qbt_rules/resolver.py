@@ -307,6 +307,7 @@ class RuleResolver:
     # it's meant for the engine to resolve later, once a torrent is known.
     RUNTIME_TOKEN_NAMESPACES = (
         'info', 'trackers', 'files', 'peers', 'properties', 'webseeds', 'transfer', 'app', 'stats',
+        'tracker',
     )
 
     def _substitute_tokens(self, node: Any, rule: Dict[str, Any]) -> Any:

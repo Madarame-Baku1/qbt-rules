@@ -208,7 +208,8 @@ def get_integrations_config(args, config_obj) -> dict:
     entries needed.
 
     Returns:
-        Dictionary with 'sonarr' and 'radarr' keys, each {'url', 'api_key'}
+        Dictionary with 'sonarr' and 'radarr' keys, each {'url', 'api_key'},
+        and 'trackie' ({'url', 'max_age', 'timeout'})
     """
     return {
         'sonarr': resolve_section_config(args, config_obj, 'integrations.sonarr', {
@@ -216,6 +217,12 @@ def get_integrations_config(args, config_obj) -> dict:
         }),
         'radarr': resolve_section_config(args, config_obj, 'integrations.radarr', {
             'url': None, 'api_key': None,
+        }),
+        # Not an arr: trackie serves tracker-side seeding stats for the
+        # tracker.* field namespace. No API key -- it's read-only and meant
+        # to sit on the same internal network as qbt-rules.
+        'trackie': resolve_section_config(args, config_obj, 'integrations.trackie', {
+            'url': None, 'max_age': None, 'timeout': None,
         }),
     }
 

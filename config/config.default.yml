@@ -186,6 +186,21 @@ notifications:
 #     # Env: QBT_RULES_INTEGRATIONS_RADARR_URL or QBT_RULES_INTEGRATIONS_RADARR_URL_FILE
 #     api_key: your-radarr-api-key-here
 #     # Env: QBT_RULES_INTEGRATIONS_RADARR_API_KEY or QBT_RULES_INTEGRATIONS_RADARR_API_KEY_FILE
+#
+#   # trackie (https://github.com/andronics/trackie): private tracker
+#   # seeding stats -- what the TRACKER says is still owed -- for the
+#   # tracker.* field namespace (tracker.status, tracker.remaining,
+#   # tracker.account.ratio_ok, ...). Fetched once per run, only when a rule
+#   # uses tracker.*. Missing, stale or unreachable data skips the rule for
+#   # that torrent; it never matches on a guess.
+#   trackie:
+#     url: http://trackie:8080
+#     # Env: QBT_RULES_INTEGRATIONS_TRACKIE_URL
+#     max_age: 3 hours
+#     # Older tracker data counts as no data. Seconds or a duration.
+#     # Env: QBT_RULES_INTEGRATIONS_TRACKIE_MAX_AGE
+#     timeout: 10
+#     # Seconds for the /snapshot request. Env: QBT_RULES_INTEGRATIONS_TRACKIE_TIMEOUT
 
 # ============================================================================
 # METRICS CONFIGURATION (optional)

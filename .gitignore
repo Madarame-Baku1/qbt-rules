@@ -52,3 +52,7 @@ config/logs/*.log
 
 # graphify local cache/output
 .graphify/
+
+# Saved tracker pages (usernames, user IDs, home IP) and graphify output: never commit
+data/
+graphify-out/
