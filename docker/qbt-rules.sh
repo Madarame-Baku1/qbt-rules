@@ -33,9 +33,15 @@ if [ "$(stat -c %u:%g "$CONFIG_DIR")" != "$PUID:$PGID" ]; then
     chown -R "$PUID:$PGID" "$CONFIG_DIR"
 fi
 
-# The image's own user keeps its home; any other uid has none, so give it a
-# writable one
-if [ "$PUID" != "1000" ]; then
+# setpriv doesn't change HOME, which would stay /root -- unwritable after
+# the drop (gunicorn keeps its control socket in $HOME/.gunicorn). Use the
+# uid's home from /etc/passwd if it has a writable one (qbtrules, 1000),
+# otherwise /tmp
+HOME_DIR="$(getent passwd "$PUID" | cut -d: -f6)"
+if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ] && \
+        setpriv --reuid="$PUID" --regid="$PGID" --clear-groups -- test -w "$HOME_DIR"; then
+    export HOME="$HOME_DIR"
+else
     export HOME=/tmp
 fi
 
