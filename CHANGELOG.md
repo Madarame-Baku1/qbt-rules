@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > before inserting its own, so a manual entry for a version gets duplicated when that
 > version is tagged.**
 
+## [0.10.0] - 2026-10-21
+
+### ✨ New Features
+- Merge pull request #14 from andronics/dev/unraid-support
+- feat: honour PUID/PGID in the Docker image
+
+### 🐛 Bug Fixes
+- Merge pull request #18 from andronics/dev/per-job-dry-run
+- Merge pull request #19 from andronics/dev/client-key-fallback
+- fix: CLI client falls back to the server's API key
+- Merge pull request #17 from Madarame-Baku1/fix/api-exception-causes
+- fix: --dry-run on a client command now dry-runs the job
+- fix: preserve original qBittorrent connection errors
+- fix: keep the venv's python first on PATH
+- Merge pull request #7 from andronics/dev/contributor-experience
+- fix: PR Docker builds, and add contributor docs and issue templates
+
+### 🔧 Maintenance
+- chore: Bump version to 0.10.0
+- Merge pull request #16 from Madarame-Baku1/chore/ruff-lint-settings
+- chore: migrate deprecated Ruff lint settings
+
+
 ## [0.9.0] - 2026-10-21
 
 ### ✨ New Features
