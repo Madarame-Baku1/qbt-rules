@@ -152,14 +152,16 @@ class Worker:
         job_id = job['job_id']
         context = job.get('context')
         hash_filter = job.get('hash')
+        job_dry_run = bool(job.get('dry_run'))
 
-        logger.info(f"Processing job {job_id} (context={context}, hash={hash_filter})")
+        logger.info(f"Processing job {job_id} (context={context}, hash={hash_filter}"
+                    f"{', dry_run=True' if job_dry_run else ''})")
 
         started_at = datetime.now(timezone.utc)
 
         try:
             # Execute job via RulesEngine
-            result = self._execute_job(context, hash_filter)
+            result = self._execute_job(context, hash_filter, job_dry_run)
 
             # Mark job as completed
             completed_at = datetime.now(timezone.utc)
@@ -200,13 +202,17 @@ class Worker:
             logger.error(f"Job {job_id} failed: {error_msg}")
             logger.debug(f"Job {job_id} traceback:\n{error_trace}")
 
-    def _execute_job(self, context: Optional[str], hash_filter: Optional[str]) -> Dict[str, Any]:
+    def _execute_job(self, context: Optional[str], hash_filter: Optional[str],
+                     job_dry_run: bool = False) -> Dict[str, Any]:
         """
         Execute job using RulesEngine
 
         Args:
             context: Context filter (weekly-cleanup, torrent-imported, etc.)
             hash_filter: Optional torrent hash filter
+            job_dry_run: The job asked for dry-run (--dry-run / ?dry_run=true).
+                It can only add dry-run: a server configured for dry-run
+                stays in dry-run whatever the job says
 
         Returns:
             Job result dictionary with execution statistics
@@ -214,8 +220,8 @@ class Worker:
         Raises:
             Exception: Any error during execution (will be caught and logged)
         """
-        # Determine dry-run mode from config
-        dry_run = self.config.is_dry_run()
+        # Dry-run if the job asked for it or the server is configured for it
+        dry_run = job_dry_run or self.config.is_dry_run()
 
         # Create RulesEngine instance
         engine = RulesEngine(

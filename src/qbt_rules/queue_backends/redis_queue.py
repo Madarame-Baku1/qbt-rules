@@ -82,7 +82,8 @@ class RedisQueue(QueueManager):
         """Build Redis key with prefix"""
         return ':'.join([self.KEY_PREFIX] + list(parts))
 
-    def enqueue(self, context: Optional[str] = None, hash_filter: Optional[str] = None) -> str:
+    def enqueue(self, context: Optional[str] = None, hash_filter: Optional[str] = None,
+                dry_run: bool = False) -> str:
         """Add job to queue"""
         job_id = self.generate_job_id()
         created_at = datetime.now(timezone.utc)
@@ -93,6 +94,7 @@ class RedisQueue(QueueManager):
             'id': job_id,
             'context': context or '',
             'hash': hash_filter or '',
+            'dry_run': '1' if dry_run else '0',
             'status': JobStatus.PENDING,
             'created_at': created_at.isoformat(),
             'started_at': '',
@@ -402,6 +404,8 @@ class RedisQueue(QueueManager):
             'job_id': hash_data.get('id', ''),
             'context': hash_data.get('context') or None,
             'hash': hash_data.get('hash') or None,
+            # Absent on jobs queued before per-job dry-run existed
+            'dry_run': hash_data.get('dry_run') == '1',
             'status': hash_data.get('status', ''),
             'created_at': hash_data.get('created_at', ''),
             'started_at': hash_data.get('started_at') or None,

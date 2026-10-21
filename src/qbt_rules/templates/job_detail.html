@@ -8,6 +8,7 @@
   <table>
     <tr><th>Status</th><td><span class="badge badge-{{ job.status }}">{{ job.status }}</span></td></tr>
     <tr><th>Context</th><td>{{ job.context or 'none' }}</td></tr>
+    <tr><th>Dry run</th><td>{{ 'yes' if job.dry_run else 'no' }}</td></tr>
     <tr><th>Hash</th><td>{{ job.hash or 'all torrents' }}</td></tr>
     <tr><th>Created</th><td>{{ job.created_at }}</td></tr>
     <tr><th>Started</th><td>{{ job.started_at or 'not started' }}</td></tr>
