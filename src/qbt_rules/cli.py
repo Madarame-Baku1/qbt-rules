@@ -144,7 +144,8 @@ def get_server_config(args, config_obj) -> dict:
         'port': 5000,
         'api_key': None,
         'workers': 1,
-    }, parsers={'port': parse_int, 'workers': parse_int})
+        'editor_enabled': True,
+    }, parsers={'port': parse_int, 'workers': parse_int, 'editor_enabled': parse_bool})
 
 
 # The api_key value config.default.yml ships with, for both server and client
@@ -364,7 +365,8 @@ def run_server_mode(args, config_obj, logging_config):
         worker_instance=worker,
         api_key=server_config['api_key'],
         config=config_obj,
-        metrics_config=metrics_config
+        metrics_config=metrics_config,
+        editor=server_config['editor_enabled']
     )
 
     # Run server

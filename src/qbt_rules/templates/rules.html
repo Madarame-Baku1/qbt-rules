@@ -29,6 +29,13 @@
   .act-type { font-family: var(--font-mono); font-weight: 700; font-size: .8rem; }
   .act-params { font-family: var(--font-mono); font-size: .72rem; color: var(--fg-dim); }
 
+  .rules-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .rules-head h2 { margin-bottom: 0; }
+  .edit-btn {
+    border: 1px solid var(--accent); background: var(--accent-soft); color: var(--fg); text-decoration: none;
+    border-radius: 7px; padding: .35rem .8rem; font-size: .8rem;
+  }
+  .rule-edit { margin: .6rem 0 0; font-size: .78rem; }
   .yaml-details summary { font-size: .78rem; color: var(--muted); padding: 0; margin-top: .75rem; }
   .yaml-details pre { margin-top: .5rem; }
 {% endblock %}
@@ -75,7 +82,10 @@
 {% endmacro %}
 
 <div class="card">
-  <h2>Rules</h2>
+  <div class="rules-head">
+    <h2>Rules</h2>
+    {% if config_available %}<a class="edit-btn" href="{{ url_for('dashboard_rules_edit') }}">Edit rules.yml</a>{% endif %}
+  </div>
   {% if not config_available %}
   <p class="empty">Rules view is unavailable (server started without a config reference).</p>
   {% elif rules %}
@@ -111,6 +121,7 @@
         <summary>Show resolved YAML</summary>
         <pre>{{ rule_yaml }}</pre>
       </details>
+      <p class="rule-edit"><a href="{{ url_for('dashboard_rules_edit') }}#rule={{ rule.id|urlencode }}">Edit this rule</a></p>
     </div>
   </details>
   {% endfor %}

@@ -75,7 +75,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-qbt_rules = ["py.typed", "templates/*.html"]
+qbt_rules = ["py.typed", "templates/*.html", "static/*.js", "static/*.css", "static/vendor/ace/*"]
 
 # pytest configuration
 [tool.pytest.ini_options]

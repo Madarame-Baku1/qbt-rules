@@ -25,8 +25,12 @@ from flask import Flask, request, jsonify, Response, render_template, redirect, 
 from qbt_rules.queue_manager import QueueManager, JobStatus
 from qbt_rules.worker import Worker
 from qbt_rules.config import Config, parse_bool
+from qbt_rules.config_store import (
+    EditableFile, FileConflictError, FileNotWritableError, redacted_config_view,
+)
+from qbt_rules.rules_validation import validate_rules_text
 from qbt_rules.__version__ import __version__
-from qbt_rules import metrics
+from qbt_rules import metrics, schema
 
 # Accepted spellings for boolean query parameters (parse_bool's true set
 # plus their opposites)
@@ -40,6 +44,14 @@ worker: Worker = None
 api_key_config: str = None
 dashboard_config: Optional[Config] = None
 metrics_enabled: bool = False
+editor_enabled: bool = True
+rules_store: Optional[EditableFile] = None
+
+# Largest request body accepted -- far beyond any real rules.yml, small
+# enough that a validate/save request can't be used to exhaust memory
+MAX_REQUEST_BYTES = 2 * 1024 * 1024
+
+SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS')
 
 
 def _timeago(value) -> str:
@@ -87,7 +99,8 @@ def create_app(
     worker_instance: Worker,
     api_key: str,
     config: Optional[Config] = None,
-    metrics_config: Optional[Dict[str, Any]] = None
+    metrics_config: Optional[Dict[str, Any]] = None,
+    editor: bool = True
 ) -> Flask:
     """
     Create and configure Flask application
@@ -106,20 +119,30 @@ def create_app(
             called by the caller before this, since that's what actually
             makes prometheus_client importable/configured; this just
             controls whether /metrics and the HTTP request hooks are wired up
+        editor: server.editor_enabled -- whether the rules editor may save
+            rules.yml. False leaves it viewable (and validating) but
+            read-only. Saving also needs config, and a writable rules.yml
 
     Returns:
         Configured Flask app
     """
-    global queue, worker, api_key_config, dashboard_config, metrics_enabled
+    global queue, worker, api_key_config, dashboard_config, metrics_enabled, editor_enabled, rules_store
 
     queue = queue_manager
     worker = worker_instance
     api_key_config = api_key
     dashboard_config = config
     metrics_enabled = bool(metrics_config and metrics_config.get('enabled'))
+    editor_enabled = editor
+    rules_store = EditableFile(config.rules_file) if config is not None else None
 
     app = Flask(__name__)
     app.config['JSON_SORT_KEYS'] = False
+    app.config['MAX_CONTENT_LENGTH'] = MAX_REQUEST_BYTES
+    # Lax keeps the dashboard session cookie off cross-site POST/PUTs --
+    # the first line of defence for the editor's write endpoints, with the
+    # X-CSRF-Token check in require_api_key_or_session as the second
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     app.jinja_env.filters['timeago'] = _timeago
 
     # Signs the dashboard session cookie -- derived deterministically from
@@ -135,8 +158,9 @@ def create_app(
     def _inject_version():
         """Makes {{ version }} available in every dashboard template via
         base.html's shared topbar, without threading it through every
-        individual route's render_template() call."""
-        return {'version': __version__}
+        individual route's render_template() call -- and {{ csrf_token() }}
+        for pages that call the JSON API with the session cookie."""
+        return {'version': __version__, 'csrf_token': _csrf_token}
 
     # Disable Flask's default logger (use our configured logger instead)
     app.logger.disabled = True
@@ -144,6 +168,7 @@ def create_app(
 
     # Register blueprints/routes
     register_routes(app)
+    register_editor_routes(app)
     register_dashboard_routes(app)
     if metrics_enabled:
         register_metrics_routes(app)
@@ -176,6 +201,50 @@ def require_api_key(f):
             }), 401
 
         return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def _csrf_token() -> str:
+    """This session's CSRF token, created on first use"""
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_urlsafe(32)
+    return session['csrf_token']
+
+
+def require_api_key_or_session(f):
+    """
+    For JSON endpoints the dashboard's own pages call from the browser
+
+    Accepts the API key exactly like require_api_key (scripts keep
+    working unchanged), or the dashboard's login session. A session is a
+    cookie the browser attaches automatically, so a state-changing request
+    riding on one must also carry the page's X-CSRF-Token header -- which
+    another site can't read or set -- or it's refused. Unauthenticated
+    requests get the same JSON 401 as require_api_key, never a redirect.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        key = request.args.get('key') or request.headers.get('X-API-Key')
+        if key:
+            if secrets.compare_digest(key, api_key_config):
+                return f(*args, **kwargs)
+        elif session.get('authenticated'):
+            if request.method in SAFE_METHODS:
+                return f(*args, **kwargs)
+            sent = request.headers.get('X-CSRF-Token', '')
+            expected = session.get('csrf_token', '')
+            if sent and expected and secrets.compare_digest(sent, expected):
+                return f(*args, **kwargs)
+            return jsonify({
+                'error': 'Forbidden',
+                'message': 'Missing or invalid X-CSRF-Token header -- reload the page and try again'
+            }), 403
+
+        return jsonify({
+            'error': 'Unauthorized',
+            'message': 'Invalid or missing API key'
+        }), 401
 
     return decorated_function
 
@@ -253,7 +322,7 @@ def register_routes(app: Flask):
     """Register all API routes"""
 
     @app.route('/api/execute', methods=['POST'])
-    @require_api_key
+    @require_api_key_or_session
     def execute():
         """
         Queue job for execution
@@ -354,7 +423,7 @@ def register_routes(app: Flask):
             }), 500
 
     @app.route('/api/jobs/<job_id>', methods=['GET'])
-    @require_api_key
+    @require_api_key_or_session
     def get_job(job_id: str):
         """
         Get job by ID
@@ -537,6 +606,14 @@ def register_routes(app: Flask):
             'python_version': os.sys.version.split()[0]
         }), 200
 
+    @app.errorhandler(413)
+    def too_large(error):
+        """Handle bodies over MAX_CONTENT_LENGTH"""
+        return jsonify({
+            'error': 'Payload Too Large',
+            'message': f'Request body exceeds {MAX_REQUEST_BYTES // (1024 * 1024)} MB'
+        }), 413
+
     @app.errorhandler(404)
     def not_found(error):
         """Handle 404 errors"""
@@ -553,6 +630,226 @@ def register_routes(app: Flask):
             'error': 'Internal Server Error',
             'message': 'An unexpected error occurred'
         }), 500
+
+
+def _editor_state() -> Dict[str, Any]:
+    """Whether rules.yml can be saved from the editor right now, and why not"""
+    if rules_store is None:
+        return {'editable': False, 'readonly_reason': 'The server was started without a config directory'}
+    if not editor_enabled:
+        return {'editable': False, 'readonly_reason': 'Saving is turned off (server.editor_enabled: false)'}
+    ok, reason = rules_store.writable()
+    return {'editable': ok, 'readonly_reason': reason}
+
+
+def _strip_etag(value: Optional[str]) -> Optional[str]:
+    """'W/"abc"' / '"abc"' / 'abc' -> 'abc'"""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if value.startswith('W/'):
+        value = value[2:]
+    return value.strip('"') or None
+
+
+def _json_body() -> Dict[str, Any]:
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def register_editor_routes(app: Flask):
+    """
+    JSON API behind the rules editor (/rules/edit)
+
+    rules.yml is edited as text -- the browser sends the whole file and the
+    server writes exactly those bytes, so comments, ordering and formatting
+    all survive. Every write carries the ETag of the version it was edited
+    from (If-Match) and is refused with 412 if the file has changed since;
+    every write is validated first (rules_validation) and refused with 422
+    if anything would fail or misfire; every write keeps a copy of what it
+    replaced (config_store). The rules engine hot-reloads rules.yml, so a
+    save applies to the next job without a restart.
+
+    config.yml is exposed read-only, with credentials masked -- see
+    config_store.redacted_config_view() for why.
+    """
+
+    def _unavailable():
+        return jsonify({
+            'error': 'Service Unavailable',
+            'message': 'The server was started without a config directory'
+        }), 503
+
+    def _bad_content():
+        return jsonify({'error': 'Bad Request', 'message': "Body must be JSON with a 'content' string"}), 400
+
+    @app.route('/api/rules/source', methods=['GET'])
+    @require_api_key_or_session
+    def rules_source():
+        """
+        rules.yml as text, with the ETag a save must send back
+
+        Returns:
+            200: {content, etag, modified_at, size, path, editable, readonly_reason}
+        """
+        if rules_store is None:
+            return _unavailable()
+        snapshot = rules_store.read()
+        response = jsonify({**snapshot.to_dict(), 'path': str(rules_store.path), **_editor_state()})
+        response.headers['ETag'] = f'"{snapshot.etag}"'
+        response.headers['Cache-Control'] = 'no-store'
+        return response, 200
+
+    @app.route('/api/rules/validate', methods=['POST'])
+    @require_api_key_or_session
+    def rules_validate():
+        """
+        Validate a candidate rules.yml without saving it
+
+        Body: {"content": "<yaml>"}
+
+        Returns:
+            200: {valid, issues: [{severity, message, path, line, column,
+                 end_line, end_column}], counts, summary}
+            400: No content
+        """
+        content = _json_body().get('content')
+        if not isinstance(content, str):
+            return _bad_content()
+        return jsonify(validate_rules_text(content)), 200
+
+    @app.route('/api/rules/source', methods=['PUT'])
+    @require_api_key_or_session
+    def rules_save():
+        """
+        Save rules.yml
+
+        Body: {"content": "<yaml>"}, plus an If-Match header (or "etag" in
+        the body) holding the ETag of the version the edit started from.
+
+        Returns:
+            200: Saved, or unchanged -- {saved, etag, modified_at, size, validation}
+            400: No content
+            403: Saving is turned off, or the file isn't writable
+            412: The file changed since that ETag -- {current: {content, etag, ...}}
+            422: Validation found errors -- {validation}
+            428: No If-Match/etag given
+        """
+        if rules_store is None:
+            return _unavailable()
+
+        body = _json_body()
+        content = body.get('content')
+        if not isinstance(content, str):
+            return _bad_content()
+
+        state = _editor_state()
+        if not state['editable']:
+            return jsonify({'error': 'Forbidden', 'message': state['readonly_reason']}), 403
+
+        if_match = _strip_etag(request.headers.get('If-Match')) or _strip_etag(body.get('etag'))
+        if not if_match:
+            return jsonify({
+                'error': 'Precondition Required',
+                'message': 'Send the ETag from GET /api/rules/source as If-Match, so a save '
+                           'cannot overwrite changes made since'
+            }), 428
+
+        validation = validate_rules_text(content)
+        if not validation['valid']:
+            return jsonify({
+                'error': 'Unprocessable Entity',
+                'message': f"rules.yml has {validation['counts']['error']} error(s) -- not saved",
+                'validation': validation,
+            }), 422
+
+        try:
+            snapshot, changed = rules_store.write(content, if_match)
+        except FileNotWritableError as e:
+            return jsonify({'error': 'Forbidden', 'message': str(e)}), 403
+        except FileConflictError as e:
+            return jsonify({
+                'error': 'Precondition Failed',
+                'message': 'rules.yml changed since you opened it',
+                'current': e.current.to_dict(),
+            }), 412
+
+        if changed:
+            # This process serves the new rules immediately; every other
+            # Gunicorn worker notices the changed file on its next
+            # get_rules() call
+            try:
+                dashboard_config.reload_rules(force=True)
+            except Exception as e:
+                logger.warning(f"Saved rules.yml but reloading it failed: {e}")
+
+        response = jsonify({
+            'saved': changed,
+            'etag': snapshot.etag,
+            'modified_at': snapshot.modified_at,
+            'size': snapshot.size,
+            'validation': validation,
+        })
+        response.headers['ETag'] = f'"{snapshot.etag}"'
+        return response, 200
+
+    @app.route('/api/rules/history', methods=['GET'])
+    @require_api_key_or_session
+    def rules_history():
+        """
+        Previous versions of rules.yml kept by editor saves, newest first
+
+        Returns:
+            200: {versions: [{id, saved_at, size}]}
+        """
+        if rules_store is None:
+            return _unavailable()
+        return jsonify({'versions': rules_store.history()}), 200
+
+    @app.route('/api/rules/history/<version_id>', methods=['GET'])
+    @require_api_key_or_session
+    def rules_history_version(version_id: str):
+        """
+        One previous version's content -- restore it by saving it
+
+        Returns:
+            200: {id, content}
+            404: No such version
+        """
+        if rules_store is None:
+            return _unavailable()
+        content = rules_store.read_version(version_id)
+        if content is None:
+            return jsonify({'error': 'Not Found', 'message': f'No saved version {version_id}'}), 404
+        return jsonify({'id': version_id, 'content': content}), 200
+
+    @app.route('/api/rules/catalog', methods=['GET'])
+    @require_api_key_or_session
+    def rules_catalog():
+        """
+        Fields, operators and action types the engine supports, for the
+        editor's autocomplete, plus the contexts config.yml's schedule fires
+        """
+        catalog = schema.catalog()
+        schedule = dashboard_config.schedule if dashboard_config is not None else []
+        catalog['schedule_contexts'] = sorted({str(entry.get('context')) for entry in schedule})
+        return jsonify(catalog), 200
+
+    @app.route('/api/config/source', methods=['GET'])
+    @require_api_key_or_session
+    def config_source():
+        """
+        config.yml as text, read-only, with credentials masked
+
+        Returns:
+            200: {content, redacted, issues, path}
+        """
+        if dashboard_config is None:
+            return _unavailable()
+        view = redacted_config_view(dashboard_config.config_file.read_text('utf-8'))
+        response = jsonify({**view, 'path': str(dashboard_config.config_file)})
+        response.headers['Cache-Control'] = 'no-store'
+        return response, 200
 
 
 _TRACEBACK_EXCEPTION_LINE = re.compile(r'^[A-Za-z_][\w.]*(?:Error|Exception|Warning)\b.*:', re.MULTILINE)
@@ -714,6 +1011,18 @@ def register_dashboard_routes(app: Flask):
             active='rules',
             rules=rules,
             rules_with_yaml=rules_with_yaml,
+            config_available=dashboard_config is not None,
+        )
+
+
+    @app.route('/rules/edit', methods=['GET'])
+    @require_api_key_dashboard
+    def dashboard_rules_edit():
+        """rules.yml editor -- the page itself is static; everything it
+        shows comes from the /api/rules/* and /api/config/source endpoints"""
+        return render_template(
+            'rules_edit.html',
+            active='rules',
             config_available=dashboard_config is not None,
         )
 

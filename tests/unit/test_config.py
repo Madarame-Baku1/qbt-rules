@@ -1176,6 +1176,64 @@ rules:
         assert "Failed to reload rules" in caplog.text
         assert "Using cached rules" in caplog.text
 
+    def test_get_rules_reloads_a_file_with_an_older_mtime(self, tmp_path):
+        """A restored backup (cp -p, git checkout) can carry an older mtime
+        than the file it replaces -- any change on disk must reload, not
+        only a newer mtime."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text("qbittorrent: {host: 'http://localhost:8080'}")
+        rules_file = config_dir / "rules.yml"
+        rules_file.write_text("rules:\n  - {id: current, conditions: [], actions: []}\n")
+
+        config = Config(config_dir)
+        assert config.get_rules()[0]['id'] == 'current'
+
+        old = rules_file.stat().st_mtime - 3600
+        rules_file.write_text("rules:\n  - {id: restored-backup, conditions: [], actions: []}\n")
+        os.utime(rules_file, (old, old))
+
+        assert config.get_rules()[0]['id'] == 'restored-backup'
+
+    def test_failed_reload_keeps_raw_rules_too(self, tmp_path):
+        """A reload that fails validation must not leave the new, invalid
+        raw rules behind next to the old resolved ones."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text("qbittorrent: {host: 'http://localhost:8080'}")
+        rules_file = config_dir / "rules.yml"
+        rules_file.write_text("rules:\n  - {id: good, conditions: [], actions: []}\n")
+
+        config = Config(config_dir)
+        config.get_rules()
+
+        rules_file.write_text("rules:\n  - {id: dup, conditions: [], actions: []}\n"
+                              "  - {id: dup, conditions: [], actions: []}\n")
+        os.utime(rules_file, (rules_file.stat().st_mtime + 5,) * 2)
+
+        assert [r['id'] for r in config.get_rules()] == ['good']
+        assert [r['id'] for r in config.get_rules(resolved=False)] == ['good']
+
+    def test_reload_rules_force(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text("qbittorrent: {host: 'http://localhost:8080'}")
+        (config_dir / "rules.yml").write_text("rules: []\n")
+
+        config = Config(config_dir)
+        assert config.reload_rules() is True       # first call after init
+        assert config.reload_rules() is False      # unchanged
+        assert config.reload_rules(force=True) is True
+
+    def test_empty_refs_block_loads(self, tmp_path):
+        """refs: with everything under it commented out parses as None"""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text("qbittorrent: {host: 'http://localhost:8080'}")
+        (config_dir / "rules.yml").write_text("refs:\n  vars:\nrules:\n  - {id: a, conditions: [], actions: []}\n")
+
+        assert Config(config_dir).get_rules()[0]['id'] == 'a'
+
     def test_env_var_expansion_in_config(self, tmp_path):
         """Environment variables are expanded in config."""
         config_dir = tmp_path / "config"
