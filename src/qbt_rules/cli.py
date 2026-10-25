@@ -770,8 +770,9 @@ def main():
 
     # Handle utility arguments (--validate, --list-rules)
     from qbt_rules.arguments import handle_utility_args
-    if handle_utility_args(args, config):
-        sys.exit(0)
+    utility_exit_code = handle_utility_args(args, config)
+    if utility_exit_code is not None:
+        sys.exit(utility_exit_code)
 
     # Determine mode
     if args.serve:

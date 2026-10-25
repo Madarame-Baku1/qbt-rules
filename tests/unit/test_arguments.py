@@ -342,8 +342,8 @@ class TestProcessArgs:
 class TestHandleUtilityArgs:
     """Test utility argument handling."""
 
-    def test_returns_false_when_no_utility_args(self):
-        """Returns False when neither validate nor list_rules set."""
+    def test_returns_none_when_no_utility_args(self):
+        """Returns None when neither validate nor list_rules is set."""
         args = Mock()
         args.validate = False
         args.list_rules = False
@@ -352,10 +352,10 @@ class TestHandleUtilityArgs:
 
         result = handle_utility_args(args, mock_config)
 
-        assert result is False
+        assert result is None
 
-    def test_validate_returns_true(self):
-        """Returns True when args.validate=True."""
+    def test_validate_returns_success_status(self):
+        """Returns exit code zero for valid configuration."""
         args = Mock()
         args.validate = True
         args.list_rules = False
@@ -370,7 +370,7 @@ class TestHandleUtilityArgs:
 
         result = handle_utility_args(args, mock_config)
 
-        assert result is True
+        assert result == 0
 
     def test_validate_checks_qbittorrent_config(self):
         """Validate checks qBittorrent configuration via the real
@@ -412,8 +412,8 @@ class TestHandleUtilityArgs:
             }
             result = handle_utility_args(args, mock_config)
 
-        # Should still return True (validation completes with errors)
-        assert result is True
+        # Invalid configuration returns a failing exit code.
+        assert result == 1
 
     def test_validate_loads_rules(self):
         """Validate loads and counts rules."""
@@ -438,6 +438,107 @@ class TestHandleUtilityArgs:
         # Should call get_rules
         mock_config.get_rules.assert_called_once()
 
+    def test_validate_reports_invalid_action(self, caplog):
+        args = Mock()
+        args.validate = True
+        args.list_rules = False
+
+        mock_config = Mock()
+        mock_config.get_rules.return_value = [
+            {'id': 'bad-rule', 'conditions': {}, 'actions': [{'type': 'set_catgory'}]}
+        ]
+
+        with patch('qbt_rules.cli.get_qbittorrent_config') as mock_get_qbt:
+            mock_get_qbt.return_value = {
+                'host': 'localhost',
+                'username': 'admin',
+                'password': 'admin',
+            }
+            result = handle_utility_args(args, mock_config)
+
+        assert result == 1
+        assert any('unknown action type' in record.message.lower() for record in caplog.records)
+        mock_config.get_rules.assert_called_once_with()
+
+    @pytest.mark.parametrize('action_type, expected', [('set_catgory', 1), ('set_category', 0)])
+    def test_validate_checks_actions_after_reference_resolution(self, tmp_path, caplog,
+                                                               action_type, expected):
+        from qbt_rules.config import Config
+
+        (tmp_path / 'config.yml').write_text('{}\n', encoding='utf-8')
+        (tmp_path / 'rules.yml').write_text(
+            "refs:\n"
+            "  actions:\n"
+            "    shared:\n"
+            f"      - type: {action_type}\n"
+            "rules:\n"
+            "  - id: referenced-rule\n"
+            "    conditions: []\n"
+            "    actions:\n"
+            "      - $ref: actions.shared\n",
+            encoding='utf-8',
+        )
+        args = Mock(validate=True, list_rules=False)
+        config = Config(tmp_path)
+
+        with patch('qbt_rules.cli.get_qbittorrent_config') as mock_get_qbt:
+            mock_get_qbt.return_value = {
+                'host': 'localhost',
+                'username': 'admin',
+                'password': 'admin',
+            }
+            result = handle_utility_args(args, config)
+
+        assert result == expected
+        if expected:
+            assert any('unknown action type' in record.message.lower() for record in caplog.records)
+
+    @pytest.mark.parametrize('action, notifications, expected, diagnostic', [
+        ({'type': 'set_category'}, {}, 0, None),
+        ({'type': 'set_upload_limit'}, {}, 0, None),
+        ({'type': 'set_download_limit'}, {}, 0, None),
+        ({'type': 'delete_torrent', 'params': {'keep_files': True}}, {}, 0, 'ignored'),
+        ({'type': 'start', 'params': {'extra': True}}, {}, 0, 'ignored'),
+        ({'type': 'notify', 'params': {'service': 'generic', 'body': [1, 2],
+                                     'url': 'https://example.invalid/hook'}}, {}, 0, None),
+        ({'type': 'notify', 'params': {'body': [1, 2]}},
+         {'service': 'generic', 'webhook_url': 'https://example.invalid/hook'}, 0, None),
+        ({'type': 'notify', 'params': {'message': 'hello'}},
+         {'service': 'discord', 'webhook_url': 'https://example.invalid/hook'}, 0, None),
+        ({'type': 'notify', 'params': {'service': 'generic', 'body': False}},
+         {'service': 'discord', 'webhook_url': 'https://example.invalid/hook'}, 0, None),
+        ({'type': 'add_tag'}, {}, 1, 'params.tags'),
+        ({'type': 'unknown'}, {}, 1, 'Unknown action type'),
+        ({'type': 'notify', 'params': {'message': 'hello'}},
+         {'webhook_url': 'https://example.invalid/hook', 'service': 'invalid'},
+         1, 'notifications.service'),
+        ({'type': 'notify', 'params': {'message': 'hello'}}, {},
+         1, 'notifications.webhook_url'),
+        ({'type': 'notify', 'params': {'body': [1, 2]}},
+         {'service': 'discord', 'webhook_url': 'https://example.invalid/hook'},
+         1, 'notify needs params.message'),
+    ])
+    def test_validate_matches_shared_action_rules(self, tmp_path, caplog, action,
+                                                notifications, expected, diagnostic):
+        import yaml
+
+        from qbt_rules.config import Config
+
+        (tmp_path / 'config.yml').write_text(yaml.safe_dump({
+            'qbittorrent': {'host': 'localhost', 'username': 'admin', 'password': 'example'},
+            'notifications': notifications,
+        }), encoding='utf-8')
+        (tmp_path / 'rules.yml').write_text(yaml.safe_dump({'rules': [{
+            'id': 'compatibility',
+            'conditions': [{'field': 'info.ratio', 'operator': '>=', 'value': 1}],
+            'actions': [action],
+        }]}), encoding='utf-8')
+        args = create_parser().parse_args(['--validate'])
+
+        assert handle_utility_args(args, Config(tmp_path)) == expected
+        if diagnostic:
+            assert any(diagnostic in record.message for record in caplog.records)
+
     def test_validate_with_no_rules_warns(self, capsys):
         """Validate warns when no rules defined."""
         args = Mock()
@@ -456,8 +557,8 @@ class TestHandleUtilityArgs:
 
         # Should complete without error
 
-    def test_list_rules_returns_true(self):
-        """Returns True when args.list_rules=True."""
+    def test_list_rules_returns_success_status(self):
+        """Returns exit code zero when args.list_rules=True."""
         args = Mock()
         args.validate = False
         args.list_rules = True
@@ -468,7 +569,7 @@ class TestHandleUtilityArgs:
 
         result = handle_utility_args(args, mock_config)
 
-        assert result is True
+        assert result == 0
 
     @patch('qbt_rules.cli_ui.print_table')
     def test_list_rules_displays_rules(self, mock_print_table):
@@ -611,17 +712,17 @@ class TestHandleUtilityArgs:
         }
         mock_config.get_rules.return_value = [
             {
-                'name': 'NoConditionsRule',
-                'actions': [{'action': 'set_category', 'category': 'test'}]
-                # Missing 'conditions'
+                'id': 'NoConditionsRule',
+                'conditions': [],
+                'actions': [{'type': 'set_category', 'params': {'category': 'test'}}]
             }
         ]
 
         result = handle_utility_args(args, mock_config)
 
         # Check that warning was logged
-        assert any("No conditions defined" in record.message for record in caplog.records)
-        assert result is True
+        assert any("Empty conditions" in record.message for record in caplog.records)
+        assert result == 0
 
     def test_validate_succeeds_with_complete_rule(self):
         """Validate succeeds for a rule with both conditions and actions (covers line 248)."""
@@ -639,14 +740,14 @@ class TestHandleUtilityArgs:
             {
                 'name': 'CompleteRule',
                 'conditions': {'all': [{'field': 'info.ratio', 'operator': '>=', 'value': 1.0}]},
-                'actions': [{'action': 'set_category', 'category': 'test'}]
+                'actions': [{'type': 'set_category', 'params': {'category': 'test'}}]
             }
         ]
 
         result = handle_utility_args(args, mock_config)
 
         # This test primarily ensures line 248 is covered (success logging path)
-        assert result is True
+        assert result == 0
 
     def test_validate_handles_exception(self):
         """Validate handles exceptions gracefully."""
@@ -660,4 +761,4 @@ class TestHandleUtilityArgs:
         # Should not raise, just log error
         result = handle_utility_args(args, mock_config)
 
-        assert result is True
+        assert result == 1

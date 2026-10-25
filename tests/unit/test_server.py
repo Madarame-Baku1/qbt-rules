@@ -1988,13 +1988,27 @@ class TestEditorRoutes:
     def test_invalid_content_is_422_and_not_written(self, client, key, config_dir):
         etag = client.get('/api/rules/source', headers=key).get_json()['etag']
         bad = "rules:\n  - id: a\n    conditions: []\n    actions:\n      - type: delete_torrent\n" \
-              "        params: {keep_files: true}\n"
+              "        params: {delete_files: \"false\"}\n"
 
         response = self.put(client, bad, etag, key)
 
         assert response.status_code == 422
         assert response.get_json()['validation']['counts']['error'] == 1
         assert (config_dir / 'rules.yml').read_text() == self.RULES
+
+    def test_unknown_action_parameter_warns_without_blocking_save(self, client, key, config_dir):
+        etag = client.get('/api/rules/source', headers=key).get_json()['etag']
+        content = self.RULES.replace(
+            '{type: stop}', '{type: delete_torrent, params: {keep_files: true}}')
+
+        response = self.put(client, content, etag, key)
+
+        assert response.status_code == 200
+        validation = response.get_json()['validation']
+        assert validation['counts']['error'] == 0
+        assert any(issue['severity'] == 'warning' and 'files ARE deleted' in issue['message']
+                   for issue in validation['issues'])
+        assert (config_dir / 'rules.yml').read_text() == content
 
     def test_editor_disabled_is_read_only(self, make_client, key, config_dir):
         client = make_client(editor=False)

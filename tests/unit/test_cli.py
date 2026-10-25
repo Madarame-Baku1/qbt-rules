@@ -1786,7 +1786,7 @@ class TestMain:
         mock_logger = Mock()
         mock_get_logger.return_value = mock_logger
 
-        mock_handle_utility.return_value = False
+        mock_handle_utility.return_value = None
 
         from qbt_rules.cli import main
         main()
@@ -1814,7 +1814,7 @@ class TestMain:
         mock_logger = Mock()
         mock_get_logger.return_value = mock_logger
 
-        mock_handle_utility.return_value = False
+        mock_handle_utility.return_value = None
 
         from qbt_rules.cli import main
         main()
@@ -1842,7 +1842,7 @@ class TestMain:
         mock_logger = Mock()
         mock_get_logger.return_value = mock_logger
 
-        mock_handle_utility.return_value = False
+        mock_handle_utility.return_value = None
 
         from qbt_rules.cli import main
         main()
@@ -1870,7 +1870,7 @@ class TestMain:
         mock_logger = Mock()
         mock_get_logger.return_value = mock_logger
 
-        mock_handle_utility.return_value = False
+        mock_handle_utility.return_value = None
 
         from qbt_rules.cli import main
         main()
@@ -1898,7 +1898,7 @@ class TestMain:
         mock_logger = Mock()
         mock_get_logger.return_value = mock_logger
 
-        mock_handle_utility.return_value = False
+        mock_handle_utility.return_value = None
 
         from qbt_rules.cli import main
         main()
@@ -1926,7 +1926,7 @@ class TestMain:
         mock_logger = Mock()
         mock_get_logger.return_value = mock_logger
 
-        mock_handle_utility.return_value = False
+        mock_handle_utility.return_value = None
 
         from qbt_rules.cli import main
         main()
@@ -1934,6 +1934,7 @@ class TestMain:
         assert mock_run_client.called
         mock_exit.assert_called_with(0)
 
+    @pytest.mark.parametrize('exit_code', [0, 1])
     @patch('qbt_rules.cli.sys.argv', ['qbt-rules', '--validate'])
     @patch('qbt_rules.arguments.handle_utility_args')
     @patch('qbt_rules.cli.get_logger')
@@ -1941,9 +1942,9 @@ class TestMain:
     @patch('qbt_rules.cli.load_config')
     @patch('qbt_rules.arguments.process_args')
     @patch('qbt_rules.cli.sys.exit')
-    def test_main_utility_mode(self, mock_exit, mock_process_args,
+    def test_main_utility_mode_propagates_exit_status(self, mock_exit, mock_process_args,
                                 mock_load_config, mock_setup_logging, mock_get_logger,
-                                mock_handle_utility):
+                                mock_handle_utility, exit_code):
         """Should handle utility arguments like --validate"""
         mock_process_args.return_value = '/config'
 
@@ -1954,10 +1955,15 @@ class TestMain:
         mock_get_logger.return_value = mock_logger
 
         # Utility mode exits early
-        mock_handle_utility.return_value = True
+        mock_handle_utility.return_value = exit_code
+        def terminate(code):
+            raise SystemExit(code)
+
+        mock_exit.side_effect = terminate
 
         from qbt_rules.cli import main
-        main()
+        with pytest.raises(SystemExit) as error:
+            main()
 
-        # Should have called sys.exit(0) after handling utility args
-        mock_exit.assert_called_with(0)
+        assert error.value.code == exit_code
+        mock_exit.assert_called_once_with(exit_code)

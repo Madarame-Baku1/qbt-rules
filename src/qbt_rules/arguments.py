@@ -3,13 +3,13 @@ Centralized argument parsing for qBittorrent automation triggers
 Provides consistent CLI interface across all triggers
 """
 
-import os
-import sys
 import argparse
+import os
 from pathlib import Path
 from typing import Optional
 
-from qbt_rules.__version__ import __version__, __description__
+from qbt_rules.__version__ import __version__
+from qbt_rules.rules_validation import ERROR, format_path, lint_rules
 
 
 def smart_config_default() -> str:
@@ -364,7 +364,7 @@ def process_args(args: argparse.Namespace) -> Path:
     return config_dir
 
 
-def handle_utility_args(args: argparse.Namespace, config) -> bool:
+def handle_utility_args(args: argparse.Namespace, config) -> Optional[int]:
     """
     Handle utility arguments (--validate, --list-rules)
 
@@ -373,7 +373,7 @@ def handle_utility_args(args: argparse.Namespace, config) -> bool:
         config: Loaded configuration object
 
     Returns:
-        True if a utility argument was handled (should exit), False otherwise
+        The utility command's exit code, or None if no utility was handled
     """
     from qbt_rules.logging import get_logger
     logger = get_logger(__name__)
@@ -385,40 +385,41 @@ def handle_utility_args(args: argparse.Namespace, config) -> bool:
         try:
             # Check qBittorrent config -- deferred import avoids a circular
             # import (cli.py already imports this module at load time)
-            from qbt_rules.cli import get_qbittorrent_config
+            from qbt_rules.cli import get_notifications_config, get_qbittorrent_config
             qbt_config = get_qbittorrent_config(args, config)
             required = ['host', 'username', 'password']
             missing = [k for k in required if not qbt_config.get(k)]
             if missing:
                 logger.error(f"Missing qBittorrent configuration: {', '.join(missing)}")
-                return True
+                return 1
 
             logger.info(f"✓ qBittorrent connection configured: {qbt_config['host']}")
 
-            # Check rules
+            # Check resolved rules so actions supplied through $ref are covered.
             rules = config.get_rules()
+            notifications_config = get_notifications_config(args, config)
             if not rules:
                 logger.warning("No rules defined in rules.yml")
             else:
                 logger.info(f"✓ Loaded {len(rules)} rules")
 
-                # Validate each rule
-                for i, rule in enumerate(rules, 1):
-                    rule_id = rule.get('id', f'rule-{i}')
-                    if not rule.get('conditions'):
-                        logger.warning(f"  ⚠ '{rule_id}': No conditions defined")
-                    if not rule.get('actions'):
-                        logger.warning(f"  ⚠ '{rule_id}': No actions defined")
-                    else:
-                        logger.info(f"  ✓ '{rule_id}'")
+            issues = lint_rules({'rules': rules}, notifications=notifications_config)
+            for issue in issues:
+                log = getattr(logger, issue.severity)
+                log(f"  {format_path(issue.path)}: {issue.message}")
+
+            errors = sum(issue.severity == ERROR for issue in issues)
+            if errors:
+                logger.error(f"Validation failed: {errors} error(s)")
+                return 1
 
             logger.info("\nValidation complete! Configuration is valid.")
 
         except Exception as e:
             logger.error(f"Validation failed: {e}")
-            return True
+            return 1
 
-        return True
+        return 0
 
     # Handle --list-rules
     if args.list_rules:
@@ -429,11 +430,11 @@ def handle_utility_args(args: argparse.Namespace, config) -> bool:
 
         if output_format == 'json':
             cli_ui.print_json(rules)
-            return True
+            return 0
 
         if not rules:
             cli_ui.print_message("No rules defined in rules.yml")
-            return True
+            return 0
 
         # Rules execute in file order (no sorting)
         rows = []
@@ -456,6 +457,6 @@ def handle_utility_args(args: argparse.Namespace, config) -> bool:
             rows=rows,
             title=f"Rules ({len(rules)} total, execute in file order):"
         )
-        return True
+        return 0
 
-    return False
+    return None

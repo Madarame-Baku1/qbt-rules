@@ -337,13 +337,14 @@ class TestActionLint:
         ''')
         assert find(result, 'counts as TRUE')['severity'] == 'error'
 
-    def test_keep_files_is_an_error(self):
+    def test_keep_files_warns_about_the_ignored_parameter(self):
         """The real-world mistake: keep_files is ignored and files ARE deleted"""
         result = self.rule_with_actions('''
                   - type: delete_torrent
                     params: {keep_files: true}
         ''')
-        assert find(result, 'files ARE deleted')['severity'] == 'error'
+        assert find(result, 'files ARE deleted')['severity'] == 'warning'
+        assert result['valid']
 
     def test_unknown_param_warns(self):
         result = self.rule_with_actions('''
@@ -379,6 +380,18 @@ class TestActionLint:
                     params: {service: generic, body: {text: hi}}
         ''')
         assert result['valid'], messages(result)
+
+    def test_generic_notify_body_uses_the_default_service(self):
+        result = self.rule_with_actions('''
+                  - type: notify
+                    params: {body: [1, 2]}
+        ''')
+        assert result['valid'], messages(result)
+
+    @pytest.mark.parametrize('action_type', ['[stop]', '{bad: stop}'])
+    def test_unhashable_action_type_is_a_diagnostic(self, action_type):
+        result = self.rule_with_actions(f'- type: {action_type}')
+        assert find(result, 'Unknown action type')['severity'] == 'error'
 
     def test_tags_as_string_warns(self):
         result = self.rule_with_actions('''

@@ -306,8 +306,9 @@ def check_resolution(raw: Dict[str, Any], locator: Locator) -> List[Issue]:
 # ---------------------------------------------------------------------------
 
 class _Linter:
-    def __init__(self, raw: Dict[str, Any]):
+    def __init__(self, raw: Dict[str, Any], notifications: Optional[Dict[str, Any]] = None):
         self.raw = raw
+        self.notifications = notifications
         refs = raw.get('refs') if isinstance(raw.get('refs'), dict) else {}
         self.vars = refs.get('vars') if isinstance(refs.get('vars'), dict) else {}
         self.issues: List[Issue] = []
@@ -594,7 +595,7 @@ class _Linter:
                          path + (key,), on_key=True)
 
         action_type = node['type']
-        spec = schema.ACTION_TYPES.get(action_type)
+        spec = schema.ACTION_TYPES.get(action_type) if isinstance(action_type, str) else None
         if spec is None:
             self.add(ERROR, f"Unknown action type '{action_type}'", path + ('type',))
             return
@@ -608,7 +609,7 @@ class _Linter:
             if name in spec['params']:
                 continue
             if action_type == 'delete_torrent' and 'keep' in str(name).lower():
-                self.add(ERROR, f"delete_torrent has no '{name}' param, so it is ignored and the files ARE "
+                self.add(WARNING, f"delete_torrent has no '{name}' param, so it is ignored and the files ARE "
                                 f"deleted (delete_files defaults to true) -- use delete_files: false",
                          path + ('params', name), on_key=True)
             else:
@@ -622,10 +623,16 @@ class _Linter:
                 continue
             self.param(action_type, name, pspec, params[name], ppath)
 
-        if action_type == 'notify' and 'message' not in params:
-            service, _ = self.effective(params.get('service'))
-            if not (service == 'generic' and 'body' in params):
+        if action_type == 'notify':
+            default_service = (self.notifications or {}).get('service', 'generic')
+            service, known = self.effective(params.get('service', default_service))
+            if known and 'service' not in params and service not in schema.NOTIFY_SERVICES:
+                self.add(ERROR, "notifications.service must be one of: "
+                                f"{', '.join(schema.NOTIFY_SERVICES)}", path)
+            if known and params.get('message') is None and not (service == 'generic' and 'body' in params):
                 self.add(ERROR, "notify needs params.message (or, for service: generic, params.body)", path)
+            if self.notifications is not None and not params.get('url') and not self.notifications.get('webhook_url'):
+                self.add(ERROR, "notify needs params.url or notifications.webhook_url", path)
 
     def param(self, action_type: str, name: str, pspec: Dict[str, Any], raw_value: Any, path: Path):
         value, known = self.effective(raw_value)
@@ -659,8 +666,9 @@ def _walk_values(node: Any, _seen: Optional[set] = None) -> Iterator[Any]:
             yield from _walk_values(v, seen)
 
 
-def lint_rules(raw: Dict[str, Any]) -> List[Issue]:
-    return _Linter(raw).run()
+def lint_rules(raw: Dict[str, Any], notifications: Optional[Dict[str, Any]] = None) -> List[Issue]:
+    """Lint rules, optionally checking against resolved notification defaults."""
+    return _Linter(raw, notifications).run()
 
 
 # ---------------------------------------------------------------------------
