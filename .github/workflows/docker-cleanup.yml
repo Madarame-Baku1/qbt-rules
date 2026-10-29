@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   cleanup:
+    if: github.repository == 'andronics/qbt-rules'
     runs-on: ubuntu-latest
 
     steps:
